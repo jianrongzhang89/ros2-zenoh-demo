@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  IMAGE: quay.io/jianrongzhang89/ros2-zenoh-demo
+  IMAGE: quay.io/jianrzha/ros2-zenoh-demo
 
 jobs:
   build:

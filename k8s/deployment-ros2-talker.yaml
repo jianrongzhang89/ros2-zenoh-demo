@@ -18,7 +18,7 @@ spec:
         runAsUser: 1001
       initContainers:
         - name: wait-for-router
-          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
           command:
             - python3
             - -c
@@ -39,7 +39,7 @@ spec:
               drop: [ALL]
       containers:
         - name: ros2-talker
-          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
           command:
             - bash
             - -c

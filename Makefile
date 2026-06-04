@@ -1,8 +1,9 @@
-IMAGE     ?= quay.io/jianrongzhang89/ros2-zenoh-demo
+IMAGE     ?= quay.io/jianrzha/ros2-zenoh-demo
 TAG       ?= latest
 NAMESPACE ?= ros2-zenoh
 # Native on M2; override to linux/arm64,linux/amd64 for multi-arch push
 PLATFORM  ?= linux/arm64
+AUTHFILE  ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test logs help
 
@@ -12,9 +13,9 @@ all: build push deploy test
 build:
 	podman build --platform $(PLATFORM) -t $(IMAGE):$(TAG) -f Dockerfile.ros2 .
 
-## Push the image to Quay.io (login with: podman login quay.io)
+## Push the image to Quay.io (login with: podman login quay.io --authfile $(AUTHFILE))
 push:
-	podman push $(IMAGE):$(TAG)
+	podman push --authfile $(AUTHFILE) $(IMAGE):$(TAG)
 
 ## Apply all Kubernetes manifests (namespace first, then everything else)
 deploy:

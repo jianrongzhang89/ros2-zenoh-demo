@@ -56,7 +56,7 @@ All inter-pod communication uses the `zenoh-router` ClusterIP Service on port 74
 | Item | Value |
 |------|-------|
 | Registry | `quay.io` |
-| Repository | `quay.io/jianrongzhang89/ros2-zenoh-demo` |
+| Repository | `quay.io/jianrzha/ros2-zenoh-demo` |
 | Tag strategy | `latest` for main branch; Git SHA tags for traceability |
 | Visibility | Public (mirrors the GitHub repo) |
 
@@ -168,7 +168,7 @@ spec:
     spec:
       containers:
         - name: zenoh-router
-          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
           command:
             - bash
             - -c
@@ -235,7 +235,7 @@ spec:
           command: ['sh', '-c', 'until nc -z zenoh-router 7447; do sleep 1; done']
       containers:
         - name: ros2-talker
-          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
           command:
             - bash
             - -c
@@ -287,7 +287,7 @@ spec:
           command: ['sh', '-c', 'until nc -z zenoh-router 7447; do sleep 1; done']
       containers:
         - name: ros2-listener
-          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
           command:
             - bash
             - -c
@@ -325,7 +325,7 @@ Add these to the GitHub repository under **Settings → Secrets and variables �
 
 | Secret | Value |
 |--------|-------|
-| `QUAY_USERNAME` | Quay.io robot account username (e.g. `jianrongzhang89+github_ci`) |
+| `QUAY_USERNAME` | Quay.io robot account username (e.g. `jianrzha+github_ci`) |
 | `QUAY_PASSWORD` | Quay.io robot account token |
 
 ### .github/workflows/build.yml
@@ -364,8 +364,8 @@ jobs:
           platforms: linux/arm64,linux/amd64
           push: true
           tags: |
-            quay.io/jianrongzhang89/ros2-zenoh-demo:latest
-            quay.io/jianrongzhang89/ros2-zenoh-demo:${{ github.sha }}
+            quay.io/jianrzha/ros2-zenoh-demo:latest
+            quay.io/jianrzha/ros2-zenoh-demo:${{ github.sha }}
 ```
 
 > **Note on build time:** The `ros:jazzy-ros-base` image with `rmw_zenoh_cpp` is large. The first build will take 10–15 minutes. Subsequent builds benefit from Docker layer caching via Buildx's `cache-from`/`cache-to` options if needed.
