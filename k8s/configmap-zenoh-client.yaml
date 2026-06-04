@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zenoh-client-config
+  namespace: ros2-zenoh
+data:
+  zenoh-client.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/zenoh-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      },
+      transport: {
+        shared_memory: { enabled: false }
+      }
+    }

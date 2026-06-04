@@ -5,4 +5,14 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-demo-nodes-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-COPY zenoh-client.json5 /zenoh-client.json5
+# Non-root user required by OpenShift restricted-v2 SCC.
+# GID 0 (root group) ensures files are accessible when OpenShift
+# assigns an arbitrary UID at runtime.
+RUN useradd -m -u 1001 -g 0 -s /bin/bash ros && \
+    chmod -R g=u /home/ros
+
+ENV HOME=/home/ros
+
+COPY --chown=1001:0 zenoh-client.json5 /zenoh-client.json5
+
+USER 1001

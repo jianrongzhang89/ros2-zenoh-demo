@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ros2-listener
+  namespace: ros2-zenoh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ros2-listener
+  template:
+    metadata:
+      labels:
+        app: ros2-listener
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      initContainers:
+        - name: wait-for-router
+          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          command:
+            - python3
+            - -c
+            - |
+              import socket, time, sys
+              print("Waiting for zenoh-router:7447 ...")
+              while True:
+                  try:
+                      s = socket.create_connection(("zenoh-router", 7447), timeout=2)
+                      s.close()
+                      print("Router is up.")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      containers:
+        - name: ros2-listener
+          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec ros2 run demo_nodes_cpp listener
+          env:
+            - name: RMW_IMPLEMENTATION
+              value: rmw_zenoh_cpp
+            - name: ZENOH_SESSION_CONFIG_URI
+              value: /etc/zenoh/zenoh-client.json5
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: zenoh-config
+              mountPath: /etc/zenoh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: zenoh-config
+          configMap:
+            name: zenoh-client-config

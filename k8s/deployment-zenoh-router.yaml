@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zenoh-router
+  namespace: ros2-zenoh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zenoh-router
+  template:
+    metadata:
+      labels:
+        app: zenoh-router
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: zenoh-router
+          image: quay.io/jianrongzhang89/ros2-zenoh-demo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec ros2 run rmw_zenoh_cpp rmw_zenohd
+          env:
+            - name: ROS_HOME
+              value: /tmp
+          ports:
+            - containerPort: 7447
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
