@@ -1,0 +1,58 @@
+services:
+
+  zenoh-router:
+    build:
+      context: .
+      dockerfile: Dockerfile.ros2
+    platform: linux/arm64
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        ros2 run rmw_zenoh_cpp rmw_zenohd
+      "
+    ports:
+      - "7447:7447/tcp"
+    networks:
+      - ros2-zenoh-net
+
+  ros2-talker:
+    build:
+      context: .
+      dockerfile: Dockerfile.ros2
+    platform: linux/arm64
+    environment:
+      RMW_IMPLEMENTATION: rmw_zenoh_cpp
+      ZENOH_SESSION_CONFIG_URI: /zenoh-client.json5
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        sleep 5 &&
+        ros2 run demo_nodes_cpp talker
+      "
+    depends_on:
+      - zenoh-router
+    networks:
+      - ros2-zenoh-net
+
+  ros2-listener:
+    build:
+      context: .
+      dockerfile: Dockerfile.ros2
+    platform: linux/arm64
+    environment:
+      RMW_IMPLEMENTATION: rmw_zenoh_cpp
+      ZENOH_SESSION_CONFIG_URI: /zenoh-client.json5
+    command: >
+      bash -c "
+        source /opt/ros/jazzy/setup.bash &&
+        sleep 7 &&
+        ros2 run demo_nodes_cpp listener
+      "
+    depends_on:
+      - zenoh-router
+    networks:
+      - ros2-zenoh-net
+
+networks:
+  ros2-zenoh-net:
+    driver: bridge
