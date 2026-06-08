@@ -1,26 +1,27 @@
 IMAGE     ?= quay.io/jianrzha/ros2-zenoh-demo
-TAG       ?= latest
+VERSION   ?= 0.0.1
 NAMESPACE ?= ros2-zenoh
-# Native on M2; override to linux/arm64,linux/amd64 for multi-arch push
-PLATFORM  ?= linux/arm64
+PLATFORM  ?= linux/amd64
 AUTHFILE  ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test logs help
 
 all: build push deploy test
 
-## Build the container image locally (single-arch, native platform)
+## Build the container image
 build:
-	podman build --platform $(PLATFORM) -t $(IMAGE):$(TAG) -f Dockerfile.ros2 .
+	podman build --platform $(PLATFORM) -t $(IMAGE):$(VERSION) -f Dockerfile.ros2 .
 
 ## Push the image to Quay.io (login with: podman login quay.io --authfile $(AUTHFILE))
 push:
-	podman push --authfile $(AUTHFILE) $(IMAGE):$(TAG)
+	podman push --authfile $(AUTHFILE) $(IMAGE):$(VERSION)
 
-## Apply all Kubernetes manifests (namespace first, then everything else)
+## Apply all Kubernetes manifests, substituting the current IMAGE:VERSION
 deploy:
 	kubectl apply -f k8s/namespace.yaml
-	kubectl apply -f k8s/
+	@for f in k8s/configmap-*.yaml k8s/service-*.yaml k8s/deployment-*.yaml; do \
+		sed 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
+	done
 
 ## Remove the namespace and all contained resources
 undeploy:
@@ -53,6 +54,6 @@ help:
 	@echo ""
 	@echo "Variables (override with make VAR=value):"
 	@echo "  IMAGE=$(IMAGE)"
-	@echo "  TAG=$(TAG)"
+	@echo "  VERSION=$(VERSION)"
 	@echo "  NAMESPACE=$(NAMESPACE)"
 	@echo "  PLATFORM=$(PLATFORM)"

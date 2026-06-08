@@ -15,7 +15,6 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
       containers:
         - name: zenoh-router
           image: quay.io/jianrzha/ros2-zenoh-demo:latest

@@ -15,7 +15,6 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
       initContainers:
         - name: wait-for-router
           image: quay.io/jianrzha/ros2-zenoh-demo:latest
