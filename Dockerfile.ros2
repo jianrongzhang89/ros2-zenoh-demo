@@ -13,6 +13,24 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     printf '[ros2]\nname=ROS 2 for RHEL 9\nbaseurl=https://packages.ros.org/ros2/rhel/9/x86_64/\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ros2\nsslverify=0\n' \
         > /etc/yum.repos.d/ros2.repo
 
+# Three packages required by ROS 2 RHEL9 RPMs are absent from all UBI9 repos:
+#   python3-lark-parser — EPEL 9 ships it as python3-lark; install the Python
+#                         package via pip and provide a shim RPM for dnf.
+#   lttng-ust-devel     — build-time header only; not needed to run pre-compiled
+#                         ROS binaries; satisfied by an empty shim RPM.
+#   eigen3-devel        — header-only C++ library; likewise not needed at runtime.
+RUN dnf install -y python3-pip rpm-build \
+    && pip3 install --quiet lark-parser \
+    && mkdir -p /tmp/rpmbuild/{SPECS,BUILD,RPMS,SRPMS,SOURCES} \
+    && for pkg in python3-lark-parser lttng-ust-devel eigen3-devel; do \
+           printf 'Name: %s\nVersion: 1.0\nRelease: 1\nSummary: UBI9 compat shim\nLicense: MIT\nBuildArch: noarch\nProvides: %s\n%%%%description\nEmpty shim satisfying install-time dep.\n%%%%files\n' \
+               "$pkg" "$pkg" > /tmp/rpmbuild/SPECS/"$pkg".spec \
+           && rpmbuild --define "_topdir /tmp/rpmbuild" -bb /tmp/rpmbuild/SPECS/"$pkg".spec \
+           && rpm -ivh /tmp/rpmbuild/RPMS/noarch/"$pkg"-1.0-1.noarch.rpm; \
+       done \
+    && rm -rf /tmp/rpmbuild \
+    && dnf clean all
+
 RUN dnf install -y \
         ros-jazzy-ros-base \
         ros-jazzy-rmw-zenoh-cpp \
