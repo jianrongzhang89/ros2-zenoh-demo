@@ -4,7 +4,7 @@ NAMESPACE ?= ros2-zenoh
 PLATFORM  ?= linux/amd64
 AUTHFILE  ?= $(HOME)/.config/containers/auth.json
 
-.PHONY: all build push deploy undeploy test logs help
+.PHONY: all build push deploy undeploy test demo logs help
 
 all: build push deploy test
 
@@ -27,22 +27,18 @@ deploy:
 undeploy:
 	kubectl delete namespace $(NAMESPACE) --ignore-not-found
 
-## Wait for all pods to be ready, then verify the listener receives messages
+## Wait for rollout then run communication verification
 test:
-	@echo "==> Waiting for zenoh-router..."
-	kubectl rollout status deployment/zenoh-router -n $(NAMESPACE) --timeout=120s
-	@echo "==> Waiting for ros2-talker..."
-	kubectl rollout status deployment/ros2-talker -n $(NAMESPACE) --timeout=120s
-	@echo "==> Waiting for ros2-listener..."
+	kubectl rollout status deployment/zenoh-router  -n $(NAMESPACE) --timeout=120s
+	kubectl rollout status deployment/ros2-talker   -n $(NAMESPACE) --timeout=120s
 	kubectl rollout status deployment/ros2-listener -n $(NAMESPACE) --timeout=120s
-	@echo "==> Sampling listener output..."
-	@sleep 5
-	@kubectl logs -n $(NAMESPACE) -l app=ros2-listener --tail=20 | grep -q "I heard" && \
-		echo "PASS: listener is receiving messages from talker" || \
-		(echo "FAIL: no messages received — listener logs:" && \
-		 kubectl logs -n $(NAMESPACE) -l app=ros2-listener --tail=20 && exit 1)
+	NAMESPACE=$(NAMESPACE) bash scripts/verify.sh
 
-## Stream live logs from all three pods (Ctrl-C to stop)
+## Live-stream all three pods showing the message pipeline (Ctrl-C to stop)
+demo:
+	NAMESPACE=$(NAMESPACE) bash scripts/demo.sh
+
+## Stream raw logs from all three pods (Ctrl-C to stop)
 logs:
 	@kubectl logs -n $(NAMESPACE) -l app=zenoh-router  --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-talker   --prefix --tail=3 &
