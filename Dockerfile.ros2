@@ -1,15 +1,17 @@
 FROM registry.access.redhat.com/ubi9/ubi
 
-# EPEL provides several ROS 2 dependencies absent from UBI9 base repos
+# EPEL + CRB provide dependencies absent from UBI9 base repos
 RUN dnf install -y \
         https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && /usr/bin/crb enable \
     && dnf clean all
 
-# Add the ROS 2 RPM repository for RHEL 9
+# Add ROS 2 GPG key and write the RHEL 9 repo file inline
+# (avoids curling packages.ros.org, which has an SSL certificate SAN mismatch)
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /etc/pki/rpm-gpg/RPM-GPG-KEY-ros2 && \
-    curl -sSL https://packages.ros.org/ros2/rhel/ros2.repo \
-        -o /etc/yum.repos.d/ros2.repo
+    printf '[ros2]\nname=ROS 2 for RHEL 9\nbaseurl=https://packages.ros.org/ros2/rhel/9/x86_64/\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ros2\n' \
+        > /etc/yum.repos.d/ros2.repo
 
 RUN dnf install -y \
         ros-jazzy-ros-base \
