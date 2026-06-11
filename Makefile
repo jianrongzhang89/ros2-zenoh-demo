@@ -47,14 +47,12 @@ logs:
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-talker   --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-listener --prefix -f
 
-## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/
+## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/, substituting IMAGE:VERSION
 deploy-bridge:
 	kubectl apply -f k8s/bridge/namespace.yaml
-	kubectl apply -f k8s/bridge/configmap-bridge-config.yaml
-	kubectl apply -f k8s/bridge/service-zenoh-bridge-router.yaml
-	kubectl apply -f k8s/bridge/deployment-zenoh-bridge-router.yaml
-	kubectl apply -f k8s/bridge/deployment-ros2-dds-talker.yaml
-	kubectl apply -f k8s/bridge/deployment-ros2-dds-listener.yaml
+	@for f in k8s/bridge/configmap-*.yaml k8s/bridge/service-*.yaml k8s/bridge/deployment-*.yaml; do \
+		sed 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
+	done
 
 ## Remove the bridge namespace and all contained resources
 undeploy-bridge:
