@@ -2,12 +2,13 @@ name: Build and Push to Quay.io
 
 on:
   push:
-    branches: [main, zeno-dds-bridge]
+    branches: [main, zeno-dds-bridge, ros2-zenoh-dds-simulator]
   pull_request:
     branches: [main]
 
 env:
-  IMAGE: quay.io/jianrzha/ros2-zenoh-demo
+  IMAGE:        quay.io/jianrzha/ros2-zenoh-demo
+  GAZEBO_IMAGE: quay.io/jianrzha/ros2-zenoh-gazebo
 
 jobs:
   build:
@@ -64,3 +65,46 @@ jobs:
             --dest-creds "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_PASSWORD }}" \
             docker://docker.io/eclipse/zenoh:latest \
             docker://quay.io/jianrzha/zenoh-router:latest
+
+  build-gazebo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build Gazebo image (PR — no push)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.gazebo
+          platforms: linux/arm64,linux/amd64
+          push: false
+
+      - name: Build and push Gazebo image (main branch)
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.gazebo
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: |
+            ${{ env.GAZEBO_IMAGE }}:latest
+            ${{ env.GAZEBO_IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.GAZEBO_IMAGE }}:latest
+          cache-to: type=inline

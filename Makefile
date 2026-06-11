@@ -1,13 +1,18 @@
-IMAGE        ?= quay.io/jianrzha/ros2-zenoh-demo
-VERSION      ?= 0.0.1
-NAMESPACE    ?= ros2-zenoh
-BRIDGE_NS    ?= ros2-zenoh-bridge
-PLATFORM     ?= linux/amd64,linux/arm64
-AUTHFILE     ?= $(HOME)/.config/containers/auth.json
+IMAGE         ?= quay.io/jianrzha/ros2-zenoh-demo
+GAZEBO_IMAGE  ?= quay.io/jianrzha/ros2-zenoh-gazebo
+VERSION       ?= 0.0.1
+NAMESPACE     ?= ros2-zenoh
+BRIDGE_NS     ?= ros2-zenoh-bridge
+GAZEBO_NS     ?= ros2-zenoh-gazebo
+PLATFORM      ?= linux/amd64,linux/arm64
+AUTHFILE      ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test demo logs \
         deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
-        mirror-bridge help
+        mirror-bridge \
+        build-gazebo push-gazebo deploy-gazebo undeploy-gazebo \
+        test-gazebo demo-gazebo logs-gazebo \
+        help
 
 all: build push deploy test
 
@@ -88,13 +93,51 @@ mirror-bridge:
 		docker://docker.io/eclipse/zenoh:latest \
 		docker://quay.io/jianrzha/zenoh-router:latest
 
+## Build the Gazebo simulation container image
+build-gazebo:
+	podman build --platform $(PLATFORM) -t $(GAZEBO_IMAGE):$(VERSION) -f Dockerfile.gazebo .
+
+## Push the Gazebo image to Quay.io
+push-gazebo:
+	podman push --authfile $(AUTHFILE) $(GAZEBO_IMAGE):$(VERSION)
+
+## Apply Gazebo simulation manifests, substituting GAZEBO_IMAGE:VERSION
+deploy-gazebo:
+	kubectl apply -f k8s/gazebo/namespace.yaml
+	@for f in k8s/gazebo/configmap-*.yaml k8s/gazebo/service-*.yaml k8s/gazebo/deployment-*.yaml; do \
+		sed 's|$(GAZEBO_IMAGE):latest|$(GAZEBO_IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
+	done
+
+## Remove the Gazebo namespace and all contained resources
+undeploy-gazebo:
+	kubectl delete namespace $(GAZEBO_NS) --ignore-not-found
+
+## Wait for rollout then run Gazebo pipeline verification
+test-gazebo:
+	kubectl rollout status deployment/zenoh-router -n $(GAZEBO_NS) --timeout=120s
+	kubectl rollout status deployment/gazebo-sim   -n $(GAZEBO_NS) --timeout=300s
+	NAMESPACE=$(GAZEBO_NS) bash scripts/verify-gazebo.sh
+
+## Live-stream all Gazebo simulation pod logs (Ctrl-C to stop)
+demo-gazebo:
+	NAMESPACE=$(GAZEBO_NS) bash scripts/demo-gazebo.sh
+
+## Stream raw logs from all Gazebo pods (Ctrl-C to stop)
+logs-gazebo:
+	@kubectl logs -n $(GAZEBO_NS) -l app=zenoh-router              --prefix --tail=3 &
+	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c gazebo-sim   --prefix --tail=3 &
+	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c ros-gz-bridge --prefix --tail=3 &
+	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c zenoh-bridge  --prefix -f
+
 ## Show this help
 help:
 	@grep -E '^## ' Makefile | sed 's/## /  /'
 	@echo ""
 	@echo "Variables (override with make VAR=value):"
 	@echo "  IMAGE=$(IMAGE)"
+	@echo "  GAZEBO_IMAGE=$(GAZEBO_IMAGE)"
 	@echo "  VERSION=$(VERSION)"
 	@echo "  NAMESPACE=$(NAMESPACE)"
 	@echo "  BRIDGE_NS=$(BRIDGE_NS)"
+	@echo "  GAZEBO_NS=$(GAZEBO_NS)"
 	@echo "  PLATFORM=$(PLATFORM)"

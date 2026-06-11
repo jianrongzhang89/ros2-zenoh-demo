@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gazebo-sim
+  namespace: ros2-zenoh-gazebo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gazebo-sim
+  template:
+    metadata:
+      labels:
+        app: gazebo-sim
+    spec:
+      securityContext:
+        runAsNonRoot: true
+
+      initContainers:
+        - name: wait-for-router
+          image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
+          command:
+            - python3
+            - -c
+            - |
+              import socket, time, sys
+              print("Waiting for zenoh-router:7447 ...")
+              while True:
+                  try:
+                      s = socket.create_connection(("zenoh-router", 7447), timeout=2)
+                      s.close()
+                      print("Router is up.")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      containers:
+        # ── Container 1: Gazebo Harmonic simulation server ────────────────────
+        - name: gazebo-sim
+          image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec gz sim -v 4 -s -r --headless-rendering /etc/gz-sim/diff_drive.sdf
+          env:
+            # Headless EGL rendering — no display server required.
+            # LIBGL_ALWAYS_SOFTWARE=1 forces Mesa llvmpipe (CPU-based EGL),
+            # avoiding a GPU requirement for CI/demo environments.
+            # Remove these two vars and add a GPU resource limit to switch
+            # to NVIDIA GPU rendering in production.
+            - name: DISPLAY
+              value: ""
+            - name: LIBGL_ALWAYS_SOFTWARE
+              value: "1"
+            - name: GALLIUM_DRIVER
+              value: llvmpipe
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: robot-model
+              mountPath: /etc/gz-sim
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+
+        # ── Container 2: ros_gz_bridge — gz-transport ↔ ROS 2 DDS ───────────
+        # Runs in the same pod network namespace as gazebo-sim, so
+        # gz-transport (ZeroMQ) discovery stays on localhost automatically.
+        - name: ros-gz-bridge
+          image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec ros2 run ros_gz_bridge parameter_bridge \
+                --ros-args -p config_file:=/etc/gz-bridge/bridge.yaml
+          env:
+            # Restrict DDS discovery to localhost — the zenoh-bridge sidecar
+            # in this same pod will forward traffic to the remote Zenoh router.
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: gz-bridge-config
+              mountPath: /etc/gz-bridge
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+        # ── Container 3: zenoh-bridge-ros2dds — ROS 2 DDS ↔ Zenoh router ────
+        # Discovers ROS 2 topics published by ros-gz-bridge on localhost DDS
+        # and forwards them over Zenoh TCP to the central zenoh-router pod.
+        - name: zenoh-bridge
+          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          args: ["-c", "/etc/zenoh/bridge.json5"]
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+          volumeMounts:
+            - name: zenoh-bridge-config
+              mountPath: /etc/zenoh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: robot-model
+          configMap:
+            name: robot-model
+        - name: gz-bridge-config
+          configMap:
+            name: gz-bridge-config
+        - name: zenoh-bridge-config
+          configMap:
+            name: zenoh-bridge-config

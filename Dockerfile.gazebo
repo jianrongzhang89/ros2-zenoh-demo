@@ -1,0 +1,32 @@
+FROM ros:jazzy-ros-core
+
+# Add OSRF APT repository — required for Gazebo Harmonic (gz-harmonic)
+# which is a dependency of ros-jazzy-ros-gz
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
+    curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+        http://packages.osrfoundation.org/gazebo/ubuntu-stable \
+        $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Gazebo Harmonic + ros_gz bridge/sim packages.
+# Mesa packages provide software EGL (llvmpipe) for headless rendering
+# without a physical GPU — activate with LIBGL_ALWAYS_SOFTWARE=1.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-ros-gz \
+        libgl1-mesa-dri \
+        libegl-mesa0 \
+        libgles2 \
+        libgbm1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenShift restricted-v2 SCC: non-root UID with GID=0 (root group)
+# so files remain accessible when OpenShift assigns an arbitrary UID at runtime.
+RUN useradd -m -u 1001 -g 0 -s /bin/bash ros && \
+    chmod -R g=u /home/ros
+
+ENV HOME=/home/ros
+
+USER 1001

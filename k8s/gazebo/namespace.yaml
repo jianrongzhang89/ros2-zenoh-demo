@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ros2-zenoh-gazebo
+  annotations:
+    # Enable UDP multicast within this namespace for DDS/RTPS peer discovery
+    # under OVN-Kubernetes (OpenShift default CNI).  The co-location pattern
+    # (all containers share a pod network namespace with LOCALHOST discovery)
+    # already avoids multicast for inter-pod communication, but the annotation
+    # is included as belt-and-suspenders for any additional ROS 2 pods added later.
+    k8s.ovn.org/multicast-enabled: "true"
