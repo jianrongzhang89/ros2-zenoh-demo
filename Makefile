@@ -1,10 +1,13 @@
-IMAGE     ?= quay.io/jianrzha/ros2-zenoh-demo
-VERSION   ?= 0.0.1
-NAMESPACE ?= ros2-zenoh
-PLATFORM  ?= linux/amd64
-AUTHFILE  ?= $(HOME)/.config/containers/auth.json
+IMAGE        ?= quay.io/jianrzha/ros2-zenoh-demo
+VERSION      ?= 0.0.1
+NAMESPACE    ?= ros2-zenoh
+BRIDGE_NS    ?= ros2-zenoh-bridge
+PLATFORM     ?= linux/amd64
+AUTHFILE     ?= $(HOME)/.config/containers/auth.json
 
-.PHONY: all build push deploy undeploy test demo logs help
+.PHONY: all build push deploy undeploy test demo logs \
+        deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
+        mirror-bridge help
 
 all: build push deploy test
 
@@ -44,6 +47,49 @@ logs:
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-talker   --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-listener --prefix -f
 
+## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/
+deploy-bridge:
+	kubectl apply -f k8s/bridge/namespace.yaml
+	kubectl apply -f k8s/bridge/configmap-bridge-config.yaml
+	kubectl apply -f k8s/bridge/service-zenoh-bridge-router.yaml
+	kubectl apply -f k8s/bridge/deployment-zenoh-bridge-router.yaml
+	kubectl apply -f k8s/bridge/deployment-ros2-dds-talker.yaml
+	kubectl apply -f k8s/bridge/deployment-ros2-dds-listener.yaml
+
+## Remove the bridge namespace and all contained resources
+undeploy-bridge:
+	kubectl delete namespace $(BRIDGE_NS) --ignore-not-found
+
+## Wait for rollout then run bridge communication verification
+test-bridge:
+	kubectl rollout status deployment/zenoh-bridge-router -n $(BRIDGE_NS) --timeout=120s
+	kubectl rollout status deployment/ros2-dds-talker     -n $(BRIDGE_NS) --timeout=120s
+	kubectl rollout status deployment/ros2-dds-listener   -n $(BRIDGE_NS) --timeout=120s
+	NAMESPACE=$(BRIDGE_NS) bash scripts/verify-bridge.sh
+
+## Live-stream the bridge message pipeline (Ctrl-C to stop)
+demo-bridge:
+	NAMESPACE=$(BRIDGE_NS) bash scripts/demo-bridge.sh
+
+## Stream raw logs from all bridge pods (Ctrl-C to stop)
+logs-bridge:
+	@kubectl logs -n $(BRIDGE_NS) -l app=zenoh-bridge-router             --prefix --tail=3 &
+	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-talker   -c ros2-talker  --prefix --tail=3 &
+	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-talker   -c zenoh-bridge --prefix --tail=3 &
+	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c ros2-listener --prefix --tail=3 &
+	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c zenoh-bridge --prefix -f
+
+## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
+mirror-bridge:
+	skopeo copy --multi-arch all \
+		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
+		docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
+		docker://quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+	skopeo copy --multi-arch all \
+		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
+		docker://docker.io/eclipse/zenoh:latest \
+		docker://quay.io/jianrzha/zenoh-router:latest
+
 ## Show this help
 help:
 	@grep -E '^## ' Makefile | sed 's/## /  /'
@@ -52,4 +98,5 @@ help:
 	@echo "  IMAGE=$(IMAGE)"
 	@echo "  VERSION=$(VERSION)"
 	@echo "  NAMESPACE=$(NAMESPACE)"
+	@echo "  BRIDGE_NS=$(BRIDGE_NS)"
 	@echo "  PLATFORM=$(PLATFORM)"

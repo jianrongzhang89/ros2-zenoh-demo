@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ros2-dds-talker
+  namespace: ros2-zenoh-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ros2-dds-talker
+  template:
+    metadata:
+      labels:
+        app: ros2-dds-talker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      initContainers:
+        - name: wait-for-router
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
+          command:
+            - python3
+            - -c
+            - |
+              import socket, time, sys
+              print("Waiting for zenoh-bridge-router:7447 ...")
+              while True:
+                  try:
+                      s = socket.create_connection(("zenoh-bridge-router", 7447), timeout=2)
+                      s.close()
+                      print("Router is up.")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      containers:
+        - name: ros2-talker
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec ros2 run demo_nodes_cpp talker
+          env:
+            # Use the default DDS RMW (NOT rmw_zenoh_cpp).
+            # The bridge sidecar handles cross-pod forwarding.
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+        - name: zenoh-bridge
+          # Bridges localhost DDS traffic to the central Zenoh router via TCP.
+          # Mirror: quay.io/jianrzha/zenoh-bridge-ros2dds:latest (populated by CI)
+          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          args: ["-c", "/etc/zenoh/bridge.json5"]
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+          volumeMounts:
+            - name: bridge-config
+              mountPath: /etc/zenoh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: bridge-config
+          configMap:
+            name: bridge-zenoh-config

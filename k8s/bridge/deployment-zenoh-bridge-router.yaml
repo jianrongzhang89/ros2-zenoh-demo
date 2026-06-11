@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zenoh-bridge-router
+  namespace: ros2-zenoh-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zenoh-bridge-router
+  template:
+    metadata:
+      labels:
+        app: zenoh-bridge-router
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: zenoh-router
+          # Pure Zenoh routing daemon — no DDS bridge; just routes Zenoh sessions
+          # from the bridge sidecars across pod boundaries via TCP.
+          # Mirror: quay.io/jianrzha/zenoh-router:latest (populated by CI)
+          image: docker.io/eclipse/zenoh:latest
+          ports:
+            - containerPort: 7447
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

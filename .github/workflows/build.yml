@@ -52,3 +52,15 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:latest
           cache-to: type=inline
+
+      - name: Mirror zenoh images to Quay.io
+        if: github.event_name == 'push'
+        run: |
+          skopeo copy --multi-arch all \
+            --dest-creds "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_PASSWORD }}" \
+            docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
+            docker://quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+          skopeo copy --multi-arch all \
+            --dest-creds "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_PASSWORD }}" \
+            docker://docker.io/eclipse/zenoh:latest \
+            docker://quay.io/jianrzha/zenoh-router:latest
