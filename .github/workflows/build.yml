@@ -2,7 +2,7 @@ name: Build and Push to Quay.io
 
 on:
   push:
-    branches: [main]
+    branches: [main, zeno-dds-bridge]
   pull_request:
     branches: [main]
 

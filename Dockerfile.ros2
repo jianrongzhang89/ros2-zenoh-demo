@@ -10,7 +10,7 @@ RUN dnf install -y \
 # sslverify=0 works around an SSL certificate SAN mismatch on packages.ros.org.
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /etc/pki/rpm-gpg/RPM-GPG-KEY-ros2 && \
-    printf '[ros2]\nname=ROS 2 for RHEL 9\nbaseurl=https://packages.ros.org/ros2/rhel/9/x86_64/\nenabled=1\ngpgcheck=0\nsslverify=0\n' \
+    printf '[ros2]\nname=ROS 2 for RHEL 9\nbaseurl=https://packages.ros.org/ros2/rhel/9/\$basearch/\nenabled=1\ngpgcheck=0\nsslverify=0\n' \
         > /etc/yum.repos.d/ros2.repo
 
 # Several packages required by the ROS 2 RHEL9 RPMs are absent from all UBI9 repos:
