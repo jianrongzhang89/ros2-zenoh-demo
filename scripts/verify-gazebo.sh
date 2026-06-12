@@ -54,10 +54,10 @@ echo
 echo "── zenoh-bridge Connectivity ────────────────────────────────────────────"
 zenoh_log=$(kubectl logs -n "$NAMESPACE" -l app=gazebo-sim -c zenoh-bridge \
     --tail=30 2>/dev/null || true)
-if echo "$zenoh_log" | grep -qiE "Opening session|Joining|Connected|router"; then
-    pass "zenoh-bridge  connected to zenoh-router"
+if echo "$zenoh_log" | grep -qiE "Discovered ROS Node|Route.*created|Allowed|zenoh_plugin_ros2dds"; then
+    pass "zenoh-bridge  active (routing ROS nodes and topics)"
 else
-    fail "zenoh-bridge  no connection evidence in last 30 log lines"
+    fail "zenoh-bridge  no activity in last 30 log lines"
 fi
 echo
 

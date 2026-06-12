@@ -37,7 +37,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.ros2
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64
           push: false
 
       - name: Build and push (main branch)
@@ -46,7 +46,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.ros2
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
@@ -92,7 +92,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.gazebo
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64
           push: false
 
       - name: Build and push Gazebo image (main branch)
@@ -101,7 +101,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.gazebo
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64
           push: true
           tags: |
             ${{ env.GAZEBO_IMAGE }}:latest

@@ -4,7 +4,7 @@ VERSION       ?= 0.0.1
 NAMESPACE     ?= ros2-zenoh
 BRIDGE_NS     ?= ros2-zenoh-bridge
 GAZEBO_NS     ?= ros2-zenoh-gazebo
-PLATFORM      ?= linux/amd64,linux/arm64
+PLATFORM      ?= linux/amd64
 AUTHFILE      ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test demo logs \
