@@ -111,7 +111,44 @@ spec:
               cpu: 500m
               memory: 256Mi
 
-        # ── Container 3: zenoh-bridge-ros2dds — ROS 2 DDS ↔ Zenoh router ────
+        # ── Container 3: gz-ws-server — gz-transport ↔ WebSocket (GzWeb) ──
+        # Subscribes to all Gazebo Transport topics in the simulation and
+        # re-publishes them as WebSocket messages on port 9002. GzWeb
+        # (browser) connects here to render the 3D world.
+        # Shares the pod network namespace with gazebo-sim so gz-transport
+        # multicast discovery works without GZ_RELAY.
+        - name: gz-ws-server
+          image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              exec gz launch -v 4 /etc/gz-ws/websocket.gzlaunch
+          env:
+            - name: DISPLAY
+              value: ""
+            - name: ROS_HOME
+              value: /tmp
+          ports:
+            - containerPort: 9002
+              protocol: TCP
+          volumeMounts:
+            - name: gz-websocket-config
+              mountPath: /etc/gz-ws
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+        # ── Container 4: zenoh-bridge-ros2dds — ROS 2 DDS ↔ Zenoh router ────
         # Discovers ROS 2 topics published by ros-gz-bridge on localhost DDS
         # and forwards them over Zenoh TCP to the central zenoh-router pod.
         - name: zenoh-bridge
@@ -145,3 +182,6 @@ spec:
         - name: zenoh-bridge-config
           configMap:
             name: zenoh-bridge-config
+        - name: gz-websocket-config
+          configMap:
+            name: gz-websocket-config

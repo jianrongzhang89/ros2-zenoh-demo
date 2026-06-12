@@ -1,0 +1,19 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: gazebo-ws
+  namespace: ros2-zenoh-gazebo
+  annotations:
+    # Allow WebSocket upgrade on this route
+    haproxy.router.openshift.io/timeout: 86400s
+spec:
+  to:
+    kind: Service
+    name: gazebo-ws
+  port:
+    targetPort: 9002
+  tls:
+    # Edge termination: OpenShift terminates TLS; backend receives plain WS.
+    # Browser connects via WSS (wss://gazebo-ws-ros2-zenoh-gazebo.<apps-domain>).
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

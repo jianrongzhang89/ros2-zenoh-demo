@@ -118,6 +118,45 @@ test-gazebo:
 	kubectl rollout status deployment/gazebo-sim   -n $(GAZEBO_NS) --timeout=300s
 	NAMESPACE=$(GAZEBO_NS) bash scripts/verify-gazebo.sh
 
+## Deploy GzWeb landing page + WebSocket service/route into ros2-zenoh-gazebo
+deploy-gzweb:
+	@for f in k8s/gazebo/configmap-gz-websocket.yaml \
+	           k8s/gazebo/configmap-gzweb-html.yaml \
+	           k8s/gazebo/service-gazebo-ws.yaml \
+	           k8s/gazebo/service-gzweb.yaml \
+	           k8s/gazebo/route-gazebo-ws.yaml \
+	           k8s/gazebo/route-gzweb.yaml \
+	           k8s/gazebo/deployment-gzweb.yaml; do \
+		kubectl apply -f $$f; \
+	done
+	@echo ""
+	@echo "Applying updated gazebo-sim deployment (adds gz-ws-server container)..."
+	sed 's|$(GAZEBO_IMAGE):latest|$(GAZEBO_IMAGE):$(VERSION)|g' \
+	    k8s/gazebo/deployment-gazebo-sim.yaml | kubectl apply -f -
+	@echo ""
+	@echo "Rolling out..."
+	kubectl rollout status deployment/gazebo-sim -n $(GAZEBO_NS) --timeout=300s
+	kubectl rollout status deployment/gzweb      -n $(GAZEBO_NS) --timeout=120s
+	@echo ""
+	@echo "GzWeb URLs:"
+	@echo "  Landing page : https://$$(kubectl get route gzweb   -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
+	@echo "  WebSocket    : wss://$$(kubectl get route gazebo-ws -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
+
+## Remove GzWeb and WebSocket resources (keeps gazebo-sim running)
+undeploy-gzweb:
+	kubectl delete deployment gzweb        -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete service    gzweb        -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete service    gazebo-ws    -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete route      gzweb        -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete route      gazebo-ws    -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete configmap  gzweb-html   -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete configmap  gz-websocket-config -n $(GAZEBO_NS) --ignore-not-found
+
+## Print the GzWeb and WebSocket Route URLs
+urls-gzweb:
+	@echo "GzWeb landing page : https://$$(kubectl get route gzweb   -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
+	@echo "WebSocket endpoint : wss://$$(kubectl get route gazebo-ws -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
+
 ## Live-stream all Gazebo simulation pod logs (Ctrl-C to stop)
 demo-gazebo:
 	NAMESPACE=$(GAZEBO_NS) bash scripts/demo-gazebo.sh

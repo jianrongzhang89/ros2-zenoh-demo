@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gz-websocket-config
+  namespace: ros2-zenoh-gazebo
+data:
+  websocket.gzlaunch: |
+    <?xml version="1.0"?>
+    <gz version="1.0">
+      <!-- WebSocket bridge: subscribes to all Gazebo Transport topics in
+           the simulation and re-publishes them as WebSocket messages on
+           port 9002. GzWeb (browser) connects here to render the world.
+           Runs in the same pod as gz sim -s so gz-transport discovery
+           works on the shared pod network namespace (no GZ_RELAY needed). -->
+      <plugin name="gz::launch::WebsocketServer"
+              filename="gz-launch-websocket-server">
+        <port>9002</port>
+        <max_clients>10</max_clients>
+        <!-- Publication rate cap — reduce if bandwidth is constrained -->
+        <publication_hz>30</publication_hz>
+      </plugin>
+    </gz>

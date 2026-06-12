@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gzweb
+  namespace: ros2-zenoh-gazebo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gzweb
+  template:
+    metadata:
+      labels:
+        app: gzweb
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: gzweb
+          # bitnami/nginx runs on port 8080 as a non-root user and is
+          # compatible with OpenShift's restricted-v2 SCC (no anyuid needed).
+          # Content is served from /app; the index.html is mounted from a ConfigMap.
+          image: docker.io/bitnami/nginx:latest
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: gzweb-html
+              mountPath: /app/index.html
+              subPath: index.html
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      volumes:
+        - name: gzweb-html
+          configMap:
+            name: gzweb-html
