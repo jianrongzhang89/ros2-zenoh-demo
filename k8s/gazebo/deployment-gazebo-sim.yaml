@@ -39,7 +39,11 @@ spec:
               drop: [ALL]
 
       containers:
-        # ── Container 1: Gazebo Harmonic simulation server ────────────────────
+        # ── Container 1: Gazebo Harmonic simulation server + WebSocket bridge ─
+        # gz-launch runs as a background process in this container so it
+        # inherits the vendor LD_LIBRARY_PATH set by setup.bash, putting it
+        # in the same gz-transport "universe" as gz sim.  Running it in a
+        # separate container causes a cross-library-instance discovery failure.
         - name: gazebo-sim
           image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
           command:
@@ -47,6 +51,11 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
+              # Start WebSocket server after gz sim is ready (15 s warm-up).
+              # Runs in the background so gz sim remains PID 1.
+              (sleep 15 && \
+               /usr/lib/x86_64-linux-gnu/gz/launch7/gz-launch -v 4 \
+               /etc/gz-ws/websocket.gzlaunch) &
               exec gz sim -v 4 -s -r --headless-rendering /etc/gz-sim/diff_drive.sdf
           env:
             # Headless EGL rendering — no display server required.
@@ -62,9 +71,14 @@ spec:
               value: llvmpipe
             - name: ROS_HOME
               value: /tmp
+          ports:
+            - containerPort: 9002
+              protocol: TCP
           volumeMounts:
             - name: robot-model
               mountPath: /etc/gz-sim
+            - name: gz-websocket-config
+              mountPath: /etc/gz-ws
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -111,46 +125,7 @@ spec:
               cpu: 500m
               memory: 256Mi
 
-        # ── Container 3: gz-ws-server — gz-transport ↔ WebSocket (GzWeb) ──
-        # Subscribes to all Gazebo Transport topics in the simulation and
-        # re-publishes them as WebSocket messages on port 9002. GzWeb
-        # (browser) connects here to render the 3D world.
-        # Shares the pod network namespace with gazebo-sim so gz-transport
-        # multicast discovery works without GZ_RELAY.
-        - name: gz-ws-server
-          image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
-          command:
-            - bash
-            - -c
-            - |
-              source /opt/ros/jazzy/setup.bash
-              # gz-launch7-cli installs to a non-PATH location; use full path.
-              # The vendor 'gz' dispatcher does not include the 'launch' subcommand.
-              exec /usr/lib/x86_64-linux-gnu/gz/launch7/gz-launch -v 4 /etc/gz-ws/websocket.gzlaunch
-          env:
-            - name: DISPLAY
-              value: ""
-            - name: ROS_HOME
-              value: /tmp
-          ports:
-            - containerPort: 9002
-              protocol: TCP
-          volumeMounts:
-            - name: gz-websocket-config
-              mountPath: /etc/gz-ws
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
-
-        # ── Container 4: zenoh-bridge-ros2dds — ROS 2 DDS ↔ Zenoh router ────
+        # ── Container 3: zenoh-bridge-ros2dds — ROS 2 DDS ↔ Zenoh router ────
         # Discovers ROS 2 topics published by ros-gz-bridge on localhost DDS
         # and forwards them over Zenoh TCP to the central zenoh-router pod.
         - name: zenoh-bridge
