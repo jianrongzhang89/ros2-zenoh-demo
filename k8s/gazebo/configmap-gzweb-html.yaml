@@ -29,12 +29,24 @@ data:
         .subtitle { color: #666; margin-bottom: 32px; font-size: 15px; }
         .label { font-size: 12px; font-weight: 600; text-transform: uppercase;
                  letter-spacing: 0.06em; color: #888; margin-bottom: 8px; }
+        .ws-row {
+          display: flex; align-items: stretch; gap: 0;
+          margin-bottom: 28px; border: 1px solid #e0e0e0; border-radius: 6px;
+          overflow: hidden;
+        }
         .ws-url {
           font-family: 'SF Mono', 'Fira Code', monospace;
-          background: #f4f4f4; padding: 14px 16px; border-radius: 6px;
-          font-size: 14px; word-break: break-all; color: #111;
-          border: 1px solid #e0e0e0; margin-bottom: 28px;
+          background: #f4f4f4; padding: 14px 16px;
+          font-size: 13px; word-break: break-all; color: #111;
+          flex: 1;
         }
+        .copy-btn {
+          background: #333; color: white; border: none; padding: 0 20px;
+          font-size: 13px; font-weight: 600; cursor: pointer;
+          white-space: nowrap; transition: background 0.15s;
+        }
+        .copy-btn:hover { background: #000; }
+        .copy-btn.copied { background: #2a7d2a; }
         .btn {
           display: inline-block; padding: 14px 28px; background: #cc0000;
           color: white; text-decoration: none; border-radius: 6px;
@@ -63,20 +75,30 @@ data:
           it in your browser using GzWeb.
         </p>
 
-        <div class="label">WebSocket Endpoint</div>
-        <div class="ws-url" id="ws-url">Detecting…</div>
+        <div class="label">Step 1 — Copy the WebSocket URL</div>
+        <div class="ws-row">
+          <div class="ws-url" id="ws-url">Detecting…</div>
+          <button class="copy-btn" id="copy-btn" onclick="copyUrl()">Copy</button>
+        </div>
 
-        <a class="btn" id="gzweb-link" href="#" target="_blank" rel="noopener">
-          Open in GzWeb ↗
+        <div class="label">Step 2 — Open GzWeb and paste it</div>
+        <a class="btn" id="gzweb-link" href="https://app.gazebosim.org/visualization"
+           target="_blank" rel="noopener">
+          Open GzWeb ↗
         </a>
+        <p style="margin-top:12px; font-size:13px; color:#666;">
+          In GzWeb, clear the WebSocket URL field, paste the URL above, leave
+          Authorization Key empty, and click <strong>Connect</strong>.
+        </p>
 
         <hr class="divider">
 
         <div class="note">
-          <strong>How it works:</strong> The button opens
+          <strong>How it works:</strong>
           <a href="https://app.gazebosim.org/visualization" target="_blank">app.gazebosim.org/visualization</a>
-          with the WebSocket URL pre-filled. GzWeb renders the 3D world in your
-          browser via WebGL — no plugins required.
+          renders the 3D simulation in your browser via WebGL.
+          GzWeb connects to the Gazebo WebSocket server running in the cluster
+          and streams scene, pose and state updates in real time.
           <div class="manual">
             <p><strong>To drive the robot</strong> from the cluster:</p>
             <ol>
@@ -95,15 +117,22 @@ data:
         // Route hostnames follow the pattern:
         //   gzweb-<namespace>.<apps-domain>
         //   gazebo-ws-<namespace>.<apps-domain>
-        // Replace the "gzweb-" prefix with "gazebo-ws-" to get the WS route.
         var pageHost = window.location.hostname;
         var wsHost = pageHost.replace(/^gzweb-/, 'gazebo-ws-');
         var wsUrl = 'wss://' + wsHost;
         document.getElementById('ws-url').textContent = wsUrl;
-        var gzwebUrl = 'https://app.gazebosim.org/visualization?websocket='
-                       + encodeURIComponent(wsUrl);
-        var link = document.getElementById('gzweb-link');
-        link.href = gzwebUrl;
+
+        function copyUrl() {
+          navigator.clipboard.writeText(wsUrl).then(function() {
+            var btn = document.getElementById('copy-btn');
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(function() {
+              btn.textContent = 'Copy';
+              btn.classList.remove('copied');
+            }, 2000);
+          });
+        }
       </script>
     </body>
     </html>
