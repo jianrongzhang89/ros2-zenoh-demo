@@ -14,8 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
 # Install Gazebo Harmonic + ros_gz bridge/sim packages.
 # Mesa packages provide software EGL (llvmpipe) for headless rendering
 # without a physical GPU — activate with LIBGL_ALWAYS_SOFTWARE=1.
+# gz-launch8 is the OSRF launch tool (NOT bundled in ros-jazzy-gz-*-vendor);
+# it provides gz-launch binary and the WebsocketServer plugin used by GzWeb.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-ros-gz \
+        gz-launch7-cli \
         libgl1-mesa-dri \
         libegl-mesa0 \
         libgles2 \

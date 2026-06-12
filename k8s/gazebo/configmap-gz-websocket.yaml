@@ -15,8 +15,8 @@ data:
       <plugin name="gz::launch::WebsocketServer"
               filename="gz-launch-websocket-server">
         <port>9002</port>
-        <max_clients>10</max_clients>
-        <!-- Publication rate cap — reduce if bandwidth is constrained -->
-        <publication_hz>30</publication_hz>
+            <publication_hz>30</publication_hz>
+        <!-- -1 = unlimited; set a positive number to cap concurrent browsers -->
+        <max_connections>-1</max_connections>
       </plugin>
     </gz>

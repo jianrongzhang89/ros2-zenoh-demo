@@ -124,7 +124,9 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
-              exec gz launch -v 4 /etc/gz-ws/websocket.gzlaunch
+              # gz-launch7-cli installs to a non-PATH location; use full path.
+              # The vendor 'gz' dispatcher does not include the 'launch' subcommand.
+              exec /usr/lib/x86_64-linux-gnu/gz/launch7/gz-launch -v 4 /etc/gz-ws/websocket.gzlaunch
           env:
             - name: DISPLAY
               value: ""
