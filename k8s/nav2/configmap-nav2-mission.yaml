@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nav2-mission
+  namespace: ros2-zenoh-gazebo
+data:
+  patrol.py: |
+    #!/usr/bin/env python3
+    """
+    Warehouse security patrol demo using Nav2 Simple Commander.
+
+    The robot loops through four waypoints in the warehouse map frame,
+    covering all four aisles.  Each lap is logged so progress is visible
+    in 'kubectl logs … -c mission'.
+    """
+    import rclpy
+    from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+    from geometry_msgs.msg import PoseStamped
+    import time
+
+
+    def make_pose(nav, x, y, yaw_deg=0.0):
+        import math
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = nav.get_clock().now().to_msg()
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        half = math.radians(yaw_deg) / 2.0
+        pose.pose.orientation.z = math.sin(half)
+        pose.pose.orientation.w = math.cos(half)
+        return pose
+
+
+    def main():
+        rclpy.init()
+        nav = BasicNavigator()
+
+        print('[patrol] Waiting for Nav2 to become active...')
+        nav.waitUntilNav2Active()
+        print('[patrol] Nav2 is active. Starting warehouse patrol.')
+
+        # Four waypoints in map frame — one per warehouse aisle.
+        # The warehouse is 8 m × 8 m; walls at ±3.85 m, shelves at ±1.85 m.
+        waypoints = [
+            make_pose(nav, -3.0,  0.0,   0.0),   # west aisle
+            make_pose(nav,  0.0,  3.0,  90.0),   # north aisle
+            make_pose(nav,  3.0,  0.0, 180.0),   # east aisle
+            make_pose(nav,  0.0, -3.0, 270.0),   # south aisle
+        ]
+
+        lap = 0
+        while rclpy.ok():
+            lap += 1
+            print(f'[patrol] Starting patrol lap {lap}')
+
+            nav.goThroughPoses(waypoints)
+
+            while not nav.isTaskComplete():
+                feedback = nav.getFeedback()
+                if feedback:
+                    remaining = getattr(feedback, 'distance_remaining', None)
+                    if remaining is not None:
+                        print(f'[patrol]   distance remaining: {remaining:.2f} m')
+                time.sleep(2.0)
+
+            result = nav.getResult()
+            if result == TaskResult.SUCCEEDED:
+                print(f'[patrol] Lap {lap} complete.')
+            elif result == TaskResult.CANCELED:
+                print(f'[patrol] Lap {lap} canceled. Retrying in 5 s.')
+                time.sleep(5.0)
+            else:
+                print(f'[patrol] Lap {lap} failed ({result}). Retrying in 5 s.')
+                time.sleep(5.0)
+
+
+    if __name__ == '__main__':
+        main()

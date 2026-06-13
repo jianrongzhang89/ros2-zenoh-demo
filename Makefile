@@ -1,5 +1,6 @@
 IMAGE         ?= quay.io/jianrzha/ros2-zenoh-demo
 GAZEBO_IMAGE  ?= quay.io/jianrzha/ros2-zenoh-gazebo
+NAV2_IMAGE    ?= quay.io/jianrzha/ros2-zenoh-nav2
 VERSION       ?= 0.0.1
 NAMESPACE     ?= ros2-zenoh
 BRIDGE_NS     ?= ros2-zenoh-bridge
@@ -12,6 +13,8 @@ AUTHFILE      ?= $(HOME)/.config/containers/auth.json
         mirror-bridge \
         build-gazebo push-gazebo deploy-gazebo undeploy-gazebo \
         test-gazebo demo-gazebo logs-gazebo \
+        deploy-gzweb undeploy-gzweb urls-gzweb \
+        build-nav2 push-nav2 deploy-nav2 undeploy-nav2 demo-nav2 logs-nav2 \
         help
 
 all: build push deploy test
@@ -168,6 +171,53 @@ logs-gazebo:
 	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c ros-gz-bridge --prefix --tail=3 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c zenoh-bridge  --prefix -f
 
+## Build the Nav2 container image
+build-nav2:
+	podman build --platform $(PLATFORM) -t $(NAV2_IMAGE):$(VERSION) -f Dockerfile.nav2 .
+
+## Push the Nav2 image to Quay.io
+push-nav2:
+	podman push --authfile $(AUTHFILE) $(NAV2_IMAGE):$(VERSION)
+
+## Apply updated Gazebo world + Nav2 manifests, restart gazebo-sim, wait for Nav2
+deploy-nav2:
+	@echo "Applying updated Gazebo configmaps (warehouse world + /scan bridge)..."
+	kubectl apply -f k8s/gazebo/configmap-robot-model.yaml
+	kubectl apply -f k8s/gazebo/configmap-gz-bridge-config.yaml
+	@echo "Restarting gazebo-sim to pick up new SDF..."
+	kubectl rollout restart deployment/gazebo-sim -n $(GAZEBO_NS)
+	kubectl rollout status deployment/gazebo-sim -n $(GAZEBO_NS) --timeout=300s
+	@echo "Applying Nav2 manifests..."
+	@for f in k8s/nav2/configmap-*.yaml; do kubectl apply -f $$f; done
+	sed 's|$(NAV2_IMAGE):latest|$(NAV2_IMAGE):$(VERSION)|g' \
+	    k8s/nav2/deployment-nav2.yaml | kubectl apply -f -
+	kubectl rollout status deployment/nav2 -n $(GAZEBO_NS) --timeout=300s
+	@echo ""
+	@echo "Nav2 deployed. Mission patrol will begin ~60 s after pod start."
+	@echo "Watch with: make demo-nav2"
+
+## Remove Nav2 deployment and ConfigMaps (keeps gazebo-sim running)
+undeploy-nav2:
+	kubectl delete deployment nav2 -n $(GAZEBO_NS) --ignore-not-found
+	kubectl delete configmap nav2-params nav2-map nav2-mission -n $(GAZEBO_NS) --ignore-not-found
+
+## Stream labeled logs from nav2-server and mission containers
+demo-nav2:
+	@cleanup() { kill 0 2>/dev/null || true; }; trap cleanup INT TERM EXIT; \
+	kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c nav2-server --follow --tail=0 2>/dev/null \
+	    | awk '{ print "[nav2   ] " $$0; fflush() }' & \
+	kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c mission --follow --tail=0 2>/dev/null \
+	    | awk '{ print "[patrol ] " $$0; fflush() }' & \
+	kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c zenoh-bridge --follow --tail=0 2>/dev/null \
+	    | awk '{ print "[bridge ] " $$0; fflush() }' & \
+	wait
+
+## Stream raw logs from Nav2 pod
+logs-nav2:
+	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c nav2-server  --prefix --tail=5 &
+	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c mission      --prefix --tail=5 &
+	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c zenoh-bridge --prefix -f
+
 ## Show this help
 help:
 	@grep -E '^## ' Makefile | sed 's/## /  /'
@@ -179,4 +229,5 @@ help:
 	@echo "  NAMESPACE=$(NAMESPACE)"
 	@echo "  BRIDGE_NS=$(BRIDGE_NS)"
 	@echo "  GAZEBO_NS=$(GAZEBO_NS)"
+	@echo "  NAV2_IMAGE=$(NAV2_IMAGE)"
 	@echo "  PLATFORM=$(PLATFORM)"

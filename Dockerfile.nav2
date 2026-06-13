@@ -1,0 +1,18 @@
+FROM ros:jazzy-ros-core
+
+# Install ROS 2 Navigation Stack (Nav2) + Python Simple Commander
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-navigation2 \
+        ros-jazzy-nav2-bringup \
+        ros-jazzy-nav2-simple-commander \
+        python3-numpy \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenShift restricted-v2 SCC: non-root UID with GID=0 (root group)
+# so files remain accessible when OpenShift assigns an arbitrary UID at runtime.
+RUN useradd -m -u 1001 -g 0 -s /bin/bash ros && \
+    chmod -R g=u /home/ros
+
+ENV HOME=/home/ros
+
+USER 1001

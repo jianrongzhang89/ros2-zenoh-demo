@@ -35,3 +35,10 @@ data:
       ros_type_name: rosgraph_msgs/msg/Clock
       gz_type_name: gz.msgs.Clock
       direction: GZ_TO_ROS
+
+    # 2D lidar scan: used by Nav2 AMCL and costmaps
+    - ros_topic_name: /scan
+      gz_topic_name: /scan
+      ros_type_name: sensor_msgs/msg/LaserScan
+      gz_type_name: gz.msgs.LaserScan
+      direction: GZ_TO_ROS

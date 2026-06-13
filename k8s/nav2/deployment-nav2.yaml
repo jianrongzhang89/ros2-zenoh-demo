@@ -1,0 +1,162 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nav2
+  namespace: ros2-zenoh-gazebo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nav2
+  template:
+    metadata:
+      labels:
+        app: nav2
+    spec:
+      securityContext:
+        runAsNonRoot: true
+
+      initContainers:
+        - name: wait-for-router
+          image: quay.io/jianrzha/ros2-zenoh-nav2:latest
+          command:
+            - python3
+            - -c
+            - |
+              import socket, time, sys
+              print("Waiting for zenoh-router:7447 ...")
+              while True:
+                  try:
+                      s = socket.create_connection(("zenoh-router", 7447), timeout=2)
+                      s.close()
+                      print("Router is up.")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      containers:
+        # ── Container 1: Nav2 navigation stack ───────────────────────────────
+        # Runs AMCL (localization), global planner (NavFn), local planner (DWB),
+        # BT Navigator, map server, and all lifecycle managers.
+        # Publishes base_link→laser static TF so AMCL can use the lidar.
+        # Uses DDS on localhost; zenoh-bridge sidecar handles cross-pod routing.
+        - name: nav2-server
+          image: quay.io/jianrzha/ros2-zenoh-nav2:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              # Publish base_link→laser static TF (lidar offset: 0.15 m forward, 0.05 m up)
+              # quaternion (0,0,0,1) = no rotation
+              ros2 run tf2_ros static_transform_publisher \
+                0.15 0 0.05 0 0 0 1 base_link laser &
+              # Wait for Gazebo simulation to be fully publishing /odom, /tf, /scan
+              echo "Waiting 30 s for simulation topics..."
+              sleep 30
+              echo "Launching Nav2..."
+              exec ros2 launch nav2_bringup bringup_launch.py \
+                use_sim_time:=true \
+                params_file:=/etc/nav2/params.yaml \
+                map:=/map/warehouse.yaml \
+                autostart:=true
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: nav2-params
+              mountPath: /etc/nav2
+            - name: nav2-map
+              mountPath: /map
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+
+        # ── Container 2: Patrol mission controller ───────────────────────────
+        # Uses Nav2 Simple Commander to send NavigateThroughPoses goals.
+        # Communicates with nav2-server via localhost DDS (same pod).
+        - name: mission
+          image: quay.io/jianrzha/ros2-zenoh-nav2:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              # Wait for Nav2 to finish initializing (nav2-server needs ~30s + startup)
+              echo "Waiting 60 s for Nav2 to become active..."
+              sleep 60
+              echo "Starting patrol mission..."
+              exec python3 /mission/patrol.py
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: nav2-mission
+              mountPath: /mission
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+        # ── Container 3: zenoh-bridge sidecar ────────────────────────────────
+        # Bridges localhost DDS traffic (from nav2-server and mission) ↔ Zenoh:
+        #   Inbound:  /odom /tf /scan /clock   (simulation → Nav2)
+        #   Outbound: /cmd_vel                  (Nav2 → simulation)
+        - name: zenoh-bridge
+          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          args: ["-c", "/etc/zenoh/bridge.json5"]
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+          volumeMounts:
+            - name: zenoh-bridge-config
+              mountPath: /etc/zenoh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: nav2-params
+          configMap:
+            name: nav2-params
+        - name: nav2-map
+          configMap:
+            name: nav2-map
+        - name: nav2-mission
+          configMap:
+            name: nav2-mission
+            defaultMode: 0755
+        - name: zenoh-bridge-config
+          configMap:
+            name: zenoh-bridge-config

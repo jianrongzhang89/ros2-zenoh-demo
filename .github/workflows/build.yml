@@ -9,6 +9,7 @@ on:
 env:
   IMAGE:        quay.io/jianrzha/ros2-zenoh-demo
   GAZEBO_IMAGE: quay.io/jianrzha/ros2-zenoh-gazebo
+  NAV2_IMAGE:   quay.io/jianrzha/ros2-zenoh-nav2
 
 jobs:
   build:
@@ -107,4 +108,44 @@ jobs:
             ${{ env.GAZEBO_IMAGE }}:latest
             ${{ env.GAZEBO_IMAGE }}:${{ github.sha }}
           cache-from: type=registry,ref=${{ env.GAZEBO_IMAGE }}:latest
+          cache-to: type=inline
+
+  build-nav2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build Nav2 image (PR — no push)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.nav2
+          platforms: linux/amd64
+          push: false
+
+      - name: Build and push Nav2 image (main branch)
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.nav2
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.NAV2_IMAGE }}:latest
+            ${{ env.NAV2_IMAGE }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.NAV2_IMAGE }}:latest
           cache-to: type=inline
