@@ -5,63 +5,22 @@ metadata:
   namespace: ros2-zenoh-gazebo
 data:
   nav2_params.yaml: |
-    amcl:
-      ros__parameters:
-        use_sim_time: true
-        alpha1: 0.2
-        alpha2: 0.2
-        alpha3: 0.2
-        alpha4: 0.2
-        alpha5: 0.2
-        base_frame_id: base_link
-        beam_skip_distance: 0.5
-        beam_skip_error_threshold: 0.9
-        beam_skip_threshold: 0.3
-        do_beamskip: false
-        global_frame_id: map
-        lambda_short: 0.1
-        laser_likelihood_max_dist: 2.0
-        laser_max_range: 8.0
-        laser_min_range: -1.0
-        laser_model_type: likelihood_field
-        max_beams: 60
-        max_particles: 2000
-        min_particles: 500
-        odom_frame_id: odom
-        pf_err: 0.05
-        pf_z: 0.99
-        recovery_alpha_fast: 0.0
-        recovery_alpha_slow: 0.0
-        resample_interval: 1
-        robot_model_type: nav2_amcl::DifferentialMotionModel
-        save_pose_rate: 0.5
-        sigma_hit: 0.2
-        tf_broadcast: true
-        transform_tolerance: 1.0
-        update_min_a: 0.2
-        update_min_d: 0.25
-        z_hit: 0.5
-        z_max: 0.05
-        z_rand: 0.5
-        z_short: 0.05
-        scan_topic: /scan
-        # Seed AMCL at the robot's spawn position so it converges quickly
-        set_initial_pose: true
-        initial_pose:
-          x: 0.0
-          y: 0.0
-          z: 0.0
-          yaw: 0.0
+    # Odom-frame navigation — no AMCL, no lidar, no static map.
+    # Robot navigates in the odom frame relative to its start position.
+    # Works with just /odom and /tf (no /scan needed).
 
     bt_navigator:
       ros__parameters:
         use_sim_time: true
-        global_frame: map
+        global_frame: odom
         robot_base_frame: base_link
         odom_topic: /odom
         bt_loop_duration: 10
         default_server_timeout: 20
-        wait_for_service_timeout: 1000
+        wait_for_service_timeout: 30000
+        # Use simpler BT files that don't require behavior_server backup action
+        default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
+        default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
         action_server_result_timeout: 900.0
         navigators:
           - navigate_to_pose
@@ -70,54 +29,6 @@ data:
           plugin: nav2_bt_navigator::NavigateToPoseNavigator
         navigate_through_poses:
           plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
-        plugin_lib_names:
-          - nav2_compute_path_to_pose_action_bt_node
-          - nav2_compute_path_through_poses_action_bt_node
-          - nav2_smooth_path_action_bt_node
-          - nav2_follow_path_action_bt_node
-          - nav2_spin_action_bt_node
-          - nav2_wait_action_bt_node
-          - nav2_assisted_teleop_action_bt_node
-          - nav2_back_up_action_bt_node
-          - nav2_drive_on_heading_bt_node
-          - nav2_clear_costmap_service_bt_node
-          - nav2_is_stuck_condition_bt_node
-          - nav2_goal_reached_condition_bt_node
-          - nav2_goal_updated_condition_bt_node
-          - nav2_globally_updated_goal_condition_bt_node
-          - nav2_is_path_valid_condition_bt_node
-          - nav2_initial_pose_received_condition_bt_node
-          - nav2_reinitialize_global_localization_service_bt_node
-          - nav2_rate_controller_bt_node
-          - nav2_distance_controller_bt_node
-          - nav2_speed_controller_bt_node
-          - nav2_truncate_path_action_bt_node
-          - nav2_truncate_path_local_action_bt_node
-          - nav2_goal_updater_node_bt_node
-          - nav2_recovery_node_bt_node
-          - nav2_pipeline_sequence_bt_node
-          - nav2_round_robin_node_bt_node
-          - nav2_transform_available_condition_bt_node
-          - nav2_time_expired_condition_bt_node
-          - nav2_path_expiring_timer_condition
-          - nav2_distance_traveled_condition_bt_node
-          - nav2_single_trigger_bt_node
-          - nav2_goal_updated_controller_bt_node
-          - nav2_is_battery_low_condition_bt_node
-          - nav2_navigate_through_poses_action_bt_node
-          - nav2_navigate_to_pose_action_bt_node
-          - nav2_remove_passed_goals_action_bt_node
-          - nav2_planner_selector_bt_node
-          - nav2_controller_selector_bt_node
-          - nav2_goal_checker_selector_bt_node
-          - nav2_controller_cancel_bt_node
-          - nav2_path_longer_on_approach_bt_node
-          - nav2_wait_cancel_bt_node
-          - nav2_spin_cancel_bt_node
-          - nav2_back_up_cancel_bt_node
-          - nav2_assisted_teleop_cancel_bt_node
-          - nav2_drive_on_heading_cancel_bt_node
-          - nav2_is_battery_charging_condition_bt_node
 
     controller_server:
       ros__parameters:
@@ -203,22 +114,7 @@ data:
           resolution: 0.05
           robot_radius: 0.22
           plugins:
-            - obstacle_layer
             - inflation_layer
-          obstacle_layer:
-            plugin: nav2_costmap_2d::ObstacleLayer
-            enabled: true
-            observation_sources: scan
-            scan:
-              topic: /scan
-              max_obstacle_height: 2.0
-              clearing: true
-              marking: true
-              data_type: LaserScan
-              raytrace_max_range: 4.0
-              raytrace_min_range: 0.0
-              obstacle_max_range: 3.5
-              obstacle_min_range: 0.0
           inflation_layer:
             plugin: nav2_costmap_2d::InflationLayer
             cost_scaling_factor: 3.0
@@ -231,50 +127,21 @@ data:
           use_sim_time: true
           update_frequency: 1.0
           publish_frequency: 1.0
-          global_frame: map
+          global_frame: odom
           robot_base_frame: base_link
           robot_radius: 0.22
           resolution: 0.05
-          track_unknown_space: true
+          track_unknown_space: false
+          rolling_window: true
+          width: 20
+          height: 20
           plugins:
-            - static_layer
-            - obstacle_layer
             - inflation_layer
-          static_layer:
-            plugin: nav2_costmap_2d::StaticLayer
-            map_subscribe_transient_local: true
-          obstacle_layer:
-            plugin: nav2_costmap_2d::ObstacleLayer
-            enabled: true
-            observation_sources: scan
-            scan:
-              topic: /scan
-              max_obstacle_height: 2.0
-              clearing: true
-              marking: true
-              data_type: LaserScan
-              raytrace_max_range: 4.0
-              raytrace_min_range: 0.0
-              obstacle_max_range: 3.5
-              obstacle_min_range: 0.0
           inflation_layer:
             plugin: nav2_costmap_2d::InflationLayer
             cost_scaling_factor: 3.0
             inflation_radius: 0.55
           always_send_full_costmap: true
-
-    map_server:
-      ros__parameters:
-        use_sim_time: true
-        yaml_filename: /map/warehouse.yaml
-
-    map_saver:
-      ros__parameters:
-        use_sim_time: true
-        save_map_timeout: 5.0
-        free_thresh_default: 0.25
-        occupied_thresh_default: 0.65
-        map_subscribe_transient_local: true
 
     planner_server:
       ros__parameters:
@@ -324,7 +191,7 @@ data:
         assisted_teleop:
           plugin: nav2_behaviors::AssistedTeleop
         local_frame: odom
-        global_frame: map
+        global_frame: odom
         robot_base_frame: base_link
         transform_tolerance: 0.5
         simulate_ahead_time: 2.0
@@ -359,6 +226,32 @@ data:
         deadband_velocity: [0.0, 0.0, 0.0]
         velocity_timeout: 1.0
 
+    docking_server:
+      ros__parameters:
+        use_sim_time: true
+        controller_frequency: 50.0
+        initial_perception_timeout: 5.0
+        wait_charge_timeout: 5.0
+        dock_approach_timeout: 30.0
+        undock_linear_tolerance: 0.05
+        undock_angular_tolerance: 0.05
+        max_retries: 3
+        base_frame: base_link
+        fixed_frame: odom
+        dock_backwards: false
+        dock_prestaging_tolerance: 0.5
+        dock_plugins: ["simple_charging_dock"]
+        simple_charging_dock:
+          plugin: opennav_docking::SimpleChargingDock
+          docking_threshold: 0.05
+          staging_x_offset: -0.7
+          use_battery_status: false
+          use_external_detection_pose: false
+          external_detection_timeout: 1.0
+          filter_coef: 0.1
+
+    # collision_monitor: declared with a scan source so bringup_launch can
+    # configure it. Without actual /scan data it deactivates via source_timeout.
     collision_monitor:
       ros__parameters:
         use_sim_time: true
@@ -368,7 +261,7 @@ data:
         cmd_vel_out_topic: cmd_vel
         state_topic: collision_monitor_state
         transform_tolerance: 0.5
-        source_timeout: 1.0
+        source_timeout: 2.0
         base_shift_correction: true
         stop_pub_timeout: 2.0
         polygons:
@@ -388,13 +281,12 @@ data:
           type: scan
           topic: /scan
 
+    # No localization lifecycle manager — odom frame only, no AMCL/map needed
     lifecycle_manager_localization:
       ros__parameters:
         use_sim_time: true
         autostart: true
-        node_names:
-          - map_server
-          - amcl
+        node_names: []
 
     lifecycle_manager_navigation:
       ros__parameters:
@@ -408,3 +300,4 @@ data:
           - bt_navigator
           - waypoint_follower
           - velocity_smoother
+          # collision_monitor removed — requires observation_sources (lidar)

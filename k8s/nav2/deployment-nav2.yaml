@@ -40,10 +40,9 @@ spec:
 
       containers:
         # ── Container 1: Nav2 navigation stack ───────────────────────────────
-        # Runs AMCL (localization), global planner (NavFn), local planner (DWB),
-        # BT Navigator, map server, and all lifecycle managers.
-        # Publishes base_link→laser static TF so AMCL can use the lidar.
-        # Uses DDS on localhost; zenoh-bridge sidecar handles cross-pod routing.
+        # Odom-frame navigation: no AMCL or lidar required.
+        # CycloneDDS matches zenoh-bridge-ros2dds bundled CycloneDDS, fixing
+        # the "Bad Parameter" DDS writer error seen with FastRTPS.
         - name: nav2-server
           image: quay.io/jianrzha/ros2-zenoh-nav2:latest
           command:
@@ -51,22 +50,19 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
-              # Publish base_link→laser static TF (lidar offset: 0.15 m forward, 0.05 m up)
-              # quaternion (0,0,0,1) = no rotation
-              ros2 run tf2_ros static_transform_publisher \
-                0.15 0 0.05 0 0 0 1 base_link laser &
-              # Wait for Gazebo simulation to be fully publishing /odom, /tf, /scan
-              echo "Waiting 30 s for simulation topics..."
-              sleep 30
-              echo "Launching Nav2..."
+              echo "Waiting 60 s for zenoh routes to establish and simulation to publish..."
+              sleep 60
+              echo "Launching Nav2 (odom-frame, CycloneDDS, no AMCL)..."
               exec ros2 launch nav2_bringup bringup_launch.py \
                 use_sim_time:=true \
-                params_file:=/etc/nav2/params.yaml \
-                map:=/map/warehouse.yaml \
-                autostart:=true
+                params_file:=/etc/nav2/nav2_params.yaml \
+                autostart:=true \
+                use_composition:=False
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE
               value: LOCALHOST
+            - name: RMW_IMPLEMENTATION
+              value: rmw_cyclonedds_cpp
             - name: ROS_HOME
               value: /tmp
           volumeMounts:
@@ -87,8 +83,6 @@ spec:
               memory: 3Gi
 
         # ── Container 2: Patrol mission controller ───────────────────────────
-        # Uses Nav2 Simple Commander to send NavigateThroughPoses goals.
-        # Communicates with nav2-server via localhost DDS (same pod).
         - name: mission
           image: quay.io/jianrzha/ros2-zenoh-nav2:latest
           command:
@@ -96,14 +90,15 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
-              # Wait for Nav2 to finish initializing (nav2-server needs ~30s + startup)
-              echo "Waiting 60 s for Nav2 to become active..."
-              sleep 60
+              echo "Waiting 120 s for Nav2 to fully initialize..."
+              sleep 120
               echo "Starting patrol mission..."
               exec python3 /mission/patrol.py
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE
               value: LOCALHOST
+            - name: RMW_IMPLEMENTATION
+              value: rmw_cyclonedds_cpp
             - name: ROS_HOME
               value: /tmp
           volumeMounts:
@@ -122,9 +117,9 @@ spec:
               memory: 256Mi
 
         # ── Container 3: zenoh-bridge sidecar ────────────────────────────────
-        # Bridges localhost DDS traffic (from nav2-server and mission) ↔ Zenoh:
-        #   Inbound:  /odom /tf /scan /clock   (simulation → Nav2)
-        #   Outbound: /cmd_vel                  (Nav2 → simulation)
+        # Bridges CycloneDDS ↔ Zenoh router.
+        # Inbound  (Zenoh→DDS): /odom /tf /clock from gazebo-sim
+        # Outbound (DDS→Zenoh): /cmd_vel from Nav2
         - name: zenoh-bridge
           image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
           args: ["-c", "/etc/zenoh/bridge.json5"]

@@ -22,7 +22,7 @@ data:
     def make_pose(nav, x, y, yaw_deg=0.0):
         import math
         pose = PoseStamped()
-        pose.header.frame_id = 'map'
+        pose.header.frame_id = 'odom'
         pose.header.stamp = nav.get_clock().now().to_msg()
         pose.pose.position.x = x
         pose.pose.position.y = y
@@ -37,16 +37,19 @@ data:
         nav = BasicNavigator()
 
         print('[patrol] Waiting for Nav2 to become active...')
-        nav.waitUntilNav2Active()
+        # Odom-frame navigation: no AMCL, pass navigator='bt_navigator'
+        # and localizer=None so waitUntilNav2Active skips the AMCL check.
+        nav.waitUntilNav2Active(navigator='bt_navigator', localizer='bt_navigator')
         print('[patrol] Nav2 is active. Starting warehouse patrol.')
 
-        # Four waypoints in map frame — one per warehouse aisle.
-        # The warehouse is 8 m × 8 m; walls at ±3.85 m, shelves at ±1.85 m.
+        # Odom-frame waypoints (global_frame=odom, relative to robot start).
+        # Uses goToPose() in a loop — compatible with the simpler
+        # navigate_w_replanning_time BT (no backup/recovery needed).
         waypoints = [
-            make_pose(nav, -3.0,  0.0,   0.0),   # west aisle
-            make_pose(nav,  0.0,  3.0,  90.0),   # north aisle
-            make_pose(nav,  3.0,  0.0, 180.0),   # east aisle
-            make_pose(nav,  0.0, -3.0, 270.0),   # south aisle
+            make_pose(nav, -2.5,  0.0,   0.0),   # west  (odom frame)
+            make_pose(nav,  0.0,  2.5,  90.0),   # north (odom frame)
+            make_pose(nav,  2.5,  0.0, 180.0),   # east  (odom frame)
+            make_pose(nav,  0.0, -2.5, 270.0),   # south (odom frame)
         ]
 
         lap = 0
@@ -54,25 +57,26 @@ data:
             lap += 1
             print(f'[patrol] Starting patrol lap {lap}')
 
-            nav.goThroughPoses(waypoints)
+            for i, wp in enumerate(waypoints):
+                print(f'[patrol]   Navigating to waypoint {i+1}/{len(waypoints)}...')
+                nav.goToPose(wp)
 
-            while not nav.isTaskComplete():
-                feedback = nav.getFeedback()
-                if feedback:
-                    remaining = getattr(feedback, 'distance_remaining', None)
-                    if remaining is not None:
-                        print(f'[patrol]   distance remaining: {remaining:.2f} m')
-                time.sleep(2.0)
+                while not nav.isTaskComplete():
+                    feedback = nav.getFeedback()
+                    if feedback:
+                        remaining = getattr(feedback, 'distance_remaining', None)
+                        if remaining is not None:
+                            print(f'[patrol]   distance remaining: {remaining:.2f} m')
+                    time.sleep(2.0)
 
-            result = nav.getResult()
-            if result == TaskResult.SUCCEEDED:
-                print(f'[patrol] Lap {lap} complete.')
-            elif result == TaskResult.CANCELED:
-                print(f'[patrol] Lap {lap} canceled. Retrying in 5 s.')
-                time.sleep(5.0)
-            else:
-                print(f'[patrol] Lap {lap} failed ({result}). Retrying in 5 s.')
-                time.sleep(5.0)
+                result = nav.getResult()
+                if result == TaskResult.SUCCEEDED:
+                    print(f'[patrol]   Waypoint {i+1} reached.')
+                else:
+                    print(f'[patrol]   Waypoint {i+1} failed ({result}), continuing.')
+                    break
+
+            print(f'[patrol] Lap {lap} complete.')
 
 
     if __name__ == '__main__':

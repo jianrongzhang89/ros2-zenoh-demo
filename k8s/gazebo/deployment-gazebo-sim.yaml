@@ -110,6 +110,10 @@ spec:
               value: LOCALHOST
             - name: ROS_HOME
               value: /tmp
+            # CycloneDDS matches zenoh-bridge-ros2dds internal DDS, fixing
+            # the "Bad Parameter" DDS writer error seen with FastRTPS in Jazzy.
+            - name: RMW_IMPLEMENTATION
+              value: rmw_cyclonedds_cpp
           volumeMounts:
             - name: gz-bridge-config
               mountPath: /etc/gz-bridge
