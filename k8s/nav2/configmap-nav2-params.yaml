@@ -5,22 +5,18 @@ metadata:
   namespace: ros2-zenoh-gazebo
 data:
   nav2_params.yaml: |
-    # Odom-frame navigation — no AMCL, no lidar, no static map.
-    # Robot navigates in the odom frame relative to its start position.
-    # Works with just /odom and /tf (no /scan needed).
+    # Phase 2 — slam_toolbox provides live map + localization (map→odom TF).
+    # /scan now works because NVIDIA GPU enables OGRE2 lidar ray-casting.
 
     bt_navigator:
       ros__parameters:
         use_sim_time: true
-        global_frame: odom
+        global_frame: map
         robot_base_frame: base_link
         odom_topic: /odom
         bt_loop_duration: 10
         default_server_timeout: 20
         wait_for_service_timeout: 30000
-        # Use simpler BT files that don't require behavior_server backup action
-        default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
-        default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
         action_server_result_timeout: 900.0
         navigators:
           - navigate_to_pose
@@ -29,6 +25,9 @@ data:
           plugin: nav2_bt_navigator::NavigateToPoseNavigator
         navigate_through_poses:
           plugin: nav2_bt_navigator::NavigateThroughPosesNavigator
+        # Simple BT — no recovery/backup action server required
+        default_nav_to_pose_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
+        default_nav_through_poses_bt_xml: /opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
 
     controller_server:
       ros__parameters:
@@ -114,7 +113,22 @@ data:
           resolution: 0.05
           robot_radius: 0.22
           plugins:
+            - obstacle_layer
             - inflation_layer
+          obstacle_layer:
+            plugin: nav2_costmap_2d::ObstacleLayer
+            enabled: true
+            observation_sources: scan
+            scan:
+              topic: /scan
+              max_obstacle_height: 2.0
+              clearing: true
+              marking: true
+              data_type: LaserScan
+              raytrace_max_range: 4.0
+              raytrace_min_range: 0.0
+              obstacle_max_range: 3.5
+              obstacle_min_range: 0.0
           inflation_layer:
             plugin: nav2_costmap_2d::InflationLayer
             cost_scaling_factor: 3.0
@@ -127,16 +141,34 @@ data:
           use_sim_time: true
           update_frequency: 1.0
           publish_frequency: 1.0
-          global_frame: odom
+          global_frame: map
           robot_base_frame: base_link
           robot_radius: 0.22
           resolution: 0.05
-          track_unknown_space: false
-          rolling_window: true
-          width: 20
-          height: 20
+          track_unknown_space: true
           plugins:
+            - static_layer
+            - obstacle_layer
             - inflation_layer
+          static_layer:
+            plugin: nav2_costmap_2d::StaticLayer
+            # Receive the live map from slam_toolbox
+            map_subscribe_transient_local: true
+            subscribe_to_updates: true
+          obstacle_layer:
+            plugin: nav2_costmap_2d::ObstacleLayer
+            enabled: true
+            observation_sources: scan
+            scan:
+              topic: /scan
+              max_obstacle_height: 2.0
+              clearing: true
+              marking: true
+              data_type: LaserScan
+              raytrace_max_range: 4.0
+              raytrace_min_range: 0.0
+              obstacle_max_range: 3.5
+              obstacle_min_range: 0.0
           inflation_layer:
             plugin: nav2_costmap_2d::InflationLayer
             cost_scaling_factor: 3.0
@@ -191,7 +223,7 @@ data:
         assisted_teleop:
           plugin: nav2_behaviors::AssistedTeleop
         local_frame: odom
-        global_frame: odom
+        global_frame: map
         robot_base_frame: base_link
         transform_tolerance: 0.5
         simulate_ahead_time: 2.0
@@ -250,8 +282,7 @@ data:
           external_detection_timeout: 1.0
           filter_coef: 0.1
 
-    # collision_monitor: declared with a scan source so bringup_launch can
-    # configure it. Without actual /scan data it deactivates via source_timeout.
+    # Phase 2: /scan works — restore normal source_timeout (2s)
     collision_monitor:
       ros__parameters:
         use_sim_time: true
@@ -261,9 +292,7 @@ data:
         cmd_vel_out_topic: cmd_vel
         state_topic: collision_monitor_state
         transform_tolerance: 0.5
-        # source_timeout=0: timed-out sources (no scan) are immediately excluded
-        # from collision checking so cmd_vel passes through unblocked.
-        source_timeout: 0.0
+        source_timeout: 2.0
         base_shift_correction: true
         stop_pub_timeout: 2.0
         polygons:
@@ -283,7 +312,8 @@ data:
           type: scan
           topic: /scan
 
-    # No localization lifecycle manager — odom frame only, no AMCL/map needed
+    # slam_toolbox runs as a separate container in the same pod and provides
+    # both the /map topic and map→odom TF. No AMCL or map_server needed.
     lifecycle_manager_localization:
       ros__parameters:
         use_sim_time: true
@@ -302,4 +332,3 @@ data:
           - bt_navigator
           - waypoint_follower
           - velocity_smoother
-          # collision_monitor removed — requires observation_sources (lidar)

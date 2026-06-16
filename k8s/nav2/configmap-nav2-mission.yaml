@@ -22,7 +22,7 @@ data:
     def make_pose(nav, x, y, yaw_deg=0.0):
         import math
         pose = PoseStamped()
-        pose.header.frame_id = 'odom'
+        pose.header.frame_id = 'map'
         pose.header.stamp = nav.get_clock().now().to_msg()
         pose.pose.position.x = x
         pose.pose.position.y = y
@@ -39,17 +39,17 @@ data:
         print('[patrol] Waiting for Nav2 to become active...')
         # Odom-frame navigation: no AMCL, pass navigator='bt_navigator'
         # and localizer=None so waitUntilNav2Active skips the AMCL check.
+        # Phase 2: slam_toolbox provides localization — wait for bt_navigator only
         nav.waitUntilNav2Active(navigator='bt_navigator', localizer='bt_navigator')
         print('[patrol] Nav2 is active. Starting warehouse patrol.')
 
-        # Odom-frame waypoints (global_frame=odom, relative to robot start).
-        # Uses goToPose() in a loop — compatible with the simpler
-        # navigate_w_replanning_time BT (no backup/recovery needed).
+        # Map-frame waypoints — warehouse aisles at ±2.5 m from spawn origin.
+        # slam_toolbox maps the warehouse; goals are in the stable map frame.
         waypoints = [
-            make_pose(nav, -2.5,  0.0,   0.0),   # west  (odom frame)
-            make_pose(nav,  0.0,  2.5,  90.0),   # north (odom frame)
-            make_pose(nav,  2.5,  0.0, 180.0),   # east  (odom frame)
-            make_pose(nav,  0.0, -2.5, 270.0),   # south (odom frame)
+            make_pose(nav, -2.5,  0.0,   0.0),   # west  aisle (map frame)
+            make_pose(nav,  0.0,  2.5,  90.0),   # north aisle (map frame)
+            make_pose(nav,  2.5,  0.0, 180.0),   # east  aisle (map frame)
+            make_pose(nav,  0.0, -2.5, 270.0),   # south aisle (map frame)
         ]
 
         lap = 0

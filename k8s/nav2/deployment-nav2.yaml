@@ -39,10 +39,51 @@ spec:
               drop: [ALL]
 
       containers:
-        # ── Container 1: Nav2 navigation stack ───────────────────────────────
-        # Odom-frame navigation: no AMCL or lidar required.
-        # CycloneDDS matches zenoh-bridge-ros2dds bundled CycloneDDS, fixing
-        # the "Bad Parameter" DDS writer error seen with FastRTPS.
+        # ── Container 1: slam_toolbox ─────────────────────────────────────────
+        # Subscribes to /scan (GPU lidar) and /tf (odom→base_link).
+        # Builds a live map of the warehouse and publishes:
+        #   /map            (nav_msgs/OccupancyGrid) → global costmap static_layer
+        #   /tf map→odom    → replaces AMCL; Nav2 navigates in map frame
+        - name: slam-toolbox
+          image: quay.io/jianrzha/ros2-zenoh-nav2:latest
+          command:
+            - bash
+            - -c
+            - |
+              source /opt/ros/jazzy/setup.bash
+              # Wait for /scan to arrive via Zenoh bridge before starting SLAM
+              echo "Waiting 20 s for /scan to arrive..."
+              sleep 20
+              echo "Launching slam_toolbox (online_async mode)..."
+              exec ros2 launch slam_toolbox online_async_launch.py \
+                use_sim_time:=true \
+                slam_params_file:=/etc/slam/slam_params.yaml
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: RMW_IMPLEMENTATION
+              value: rmw_cyclonedds_cpp
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: slam-params
+              mountPath: /etc/slam
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+        # ── Container 2: Nav2 navigation stack ───────────────────────────────
+        # Uses navigation_launch.py (navigation only — no map_server/AMCL).
+        # slam_toolbox (container 1) provides /map and map→odom TF on localhost.
+        # CycloneDDS matches zenoh-bridge bundled CycloneDDS for Zenoh→DDS relay.
         - name: nav2-server
           image: quay.io/jianrzha/ros2-zenoh-nav2:latest
           command:
@@ -50,10 +91,11 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
-              echo "Waiting 60 s for zenoh routes to establish and simulation to publish..."
+              # Wait for slam_toolbox to initialize and publish the first map→odom TF
+              echo "Waiting 60 s for SLAM to initialize..."
               sleep 60
-              echo "Launching Nav2 (odom-frame, CycloneDDS, no AMCL)..."
-              exec ros2 launch nav2_bringup bringup_launch.py \
+              echo "Launching Nav2 (map-frame, slam_toolbox localization)..."
+              exec ros2 launch nav2_bringup navigation_launch.py \
                 use_sim_time:=true \
                 params_file:=/etc/nav2/nav2_params.yaml \
                 autostart:=true \
@@ -82,7 +124,7 @@ spec:
               cpu: "2"
               memory: 3Gi
 
-        # ── Container 2: Patrol mission controller ───────────────────────────
+        # ── Container 3: Patrol mission controller ───────────────────────────
         - name: mission
           image: quay.io/jianrzha/ros2-zenoh-nav2:latest
           command:
@@ -90,7 +132,8 @@ spec:
             - -c
             - |
               source /opt/ros/jazzy/setup.bash
-              echo "Waiting 120 s for Nav2 to fully initialize..."
+              # Wait for Nav2 + SLAM to fully initialize
+              echo "Waiting 120 s for Nav2 + SLAM to become active..."
               sleep 120
               echo "Starting patrol mission..."
               exec python3 /mission/patrol.py
@@ -116,9 +159,9 @@ spec:
               cpu: 500m
               memory: 256Mi
 
-        # ── Container 3: zenoh-bridge sidecar ────────────────────────────────
-        # Bridges CycloneDDS ↔ Zenoh router.
-        # Inbound  (Zenoh→DDS): /odom /tf /clock from gazebo-sim
+        # ── Container 4: zenoh-bridge sidecar ────────────────────────────────
+        # Bridges CycloneDDS ↔ zenoh-router.
+        # Inbound  (Zenoh→DDS): /odom /tf /scan /clock from gazebo-sim
         # Outbound (DDS→Zenoh): /cmd_vel from Nav2
         - name: zenoh-bridge
           image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
@@ -142,6 +185,9 @@ spec:
               memory: 128Mi
 
       volumes:
+        - name: slam-params
+          configMap:
+            name: slam-params
         - name: nav2-params
           configMap:
             name: nav2-params

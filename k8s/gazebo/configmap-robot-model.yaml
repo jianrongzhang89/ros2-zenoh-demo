@@ -200,7 +200,7 @@ data:
               <geometry><cylinder><radius>0.03</radius><length>0.04</length></cylinder></geometry>
               <material><ambient>0.8 0.1 0.1 1</ambient><diffuse>0.8 0.1 0.1 1</diffuse></material>
             </visual>
-            <sensor name="lidar" type="lidar">
+            <sensor name="lidar" type="gpu_lidar">
               <topic>scan</topic>
               <update_rate>10</update_rate>
               <always_on>true</always_on>

@@ -16,6 +16,16 @@ spec:
       securityContext:
         runAsNonRoot: true
 
+      # Tolerate the cluster-specific GPU node taints so the scheduler
+      # can place this pod on g5.2xlarge (A10G) or g6e.2xlarge (L40S) nodes.
+      tolerations:
+        - key: g5-gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: g6e-gpu
+          operator: Exists
+          effect: NoSchedule
+
       initContainers:
         - name: wait-for-router
           image: quay.io/jianrzha/ros2-zenoh-gazebo:latest
@@ -58,17 +68,17 @@ spec:
                /etc/gz-ws/websocket.gzlaunch) &
               exec gz sim -v 4 -s -r --headless-rendering /etc/gz-sim/diff_drive.sdf
           env:
-            # Headless EGL rendering — no display server required.
-            # LIBGL_ALWAYS_SOFTWARE=1 forces Mesa llvmpipe (CPU-based EGL),
-            # avoiding a GPU requirement for CI/demo environments.
-            # Remove these two vars and add a GPU resource limit to switch
-            # to NVIDIA GPU rendering in production.
+            # GPU-accelerated EGL rendering via NVIDIA A10G/L40S.
+            # OGRE2 uses hardware EGL — no display server needed.
+            # This enables the simulated lidar sensor to produce /scan data.
             - name: DISPLAY
               value: ""
-            - name: LIBGL_ALWAYS_SOFTWARE
-              value: "1"
-            - name: GALLIUM_DRIVER
-              value: llvmpipe
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: graphics,compute,utility
+            # Expose all available GPUs — overrides the device plugin's per-container
+            # NVIDIA_VISIBLE_DEVICES=void default, ensuring OGRE2 can find the GPU.
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
             - name: ROS_HOME
               value: /tmp
           ports:
@@ -87,9 +97,11 @@ spec:
             requests:
               cpu: 500m
               memory: 512Mi
+              nvidia.com/gpu: "1"
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
+              nvidia.com/gpu: "1"
 
         # ── Container 2: ros_gz_bridge — gz-transport ↔ ROS 2 DDS ───────────
         # Runs in the same pod network namespace as gazebo-sim, so
