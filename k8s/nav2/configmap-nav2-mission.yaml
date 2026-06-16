@@ -22,7 +22,7 @@ data:
     def make_pose(nav, x, y, yaw_deg=0.0):
         import math
         pose = PoseStamped()
-        pose.header.frame_id = 'map'
+        pose.header.frame_id = 'odom'
         pose.header.stamp = nav.get_clock().now().to_msg()
         pose.pose.position.x = x
         pose.pose.position.y = y
