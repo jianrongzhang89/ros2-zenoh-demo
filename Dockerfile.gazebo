@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-ros-gz \
         gz-launch7-cli \
+        ros-jazzy-rmw-cyclonedds-cpp \
         libgl1-mesa-dri \
         libegl-mesa0 \
         libgles2 \
