@@ -52,12 +52,27 @@ spec:
             - |
               source /opt/ros/jazzy/setup.bash
               # Wait for /scan to arrive via Zenoh bridge before starting SLAM
+              # Publish static TF for the GPU lidar sensor.
+              # Gazebo names the sensor frame after its full SDF path:
+              # diff_drive_robot/laser/lidar (model/link/sensor).
+              # slam_toolbox needs base_link → that frame to use /scan.
+              ros2 run tf2_ros static_transform_publisher \
+                0.15 0 0.05 0 0 0 1 \
+                base_link "diff_drive_robot/laser/lidar" &
               echo "Waiting 20 s for /scan to arrive..."
               sleep 20
               echo "Launching slam_toolbox (online_async mode)..."
-              exec ros2 launch slam_toolbox online_async_launch.py \
+              ros2 launch slam_toolbox online_async_launch.py \
                 use_sim_time:=true \
-                slam_params_file:=/etc/slam/slam_params.yaml
+                slam_params_file:=/etc/slam/slam_params.yaml &
+              SLAM_PID=$!
+              # online_async_launch.py does not auto-activate; do it manually
+              sleep 8
+              echo "Activating slam_toolbox lifecycle..."
+              ros2 lifecycle set /slam_toolbox configure 2>/dev/null || true
+              ros2 lifecycle set /slam_toolbox activate 2>/dev/null || true
+              echo "slam_toolbox active."
+              wait $SLAM_PID
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE
               value: LOCALHOST
