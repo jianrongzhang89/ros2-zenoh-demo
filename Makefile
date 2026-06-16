@@ -19,74 +19,61 @@ AUTHFILE      ?= $(HOME)/.config/containers/auth.json
 
 all: build push deploy test
 
-## Build the container image
-build:
+build: ## Build the ROS 2 demo container image
 	podman build --platform $(PLATFORM) -t $(IMAGE):$(VERSION) -f Dockerfile.ros2 .
 
-## Push the image to Quay.io (login with: podman login quay.io --authfile $(AUTHFILE))
-push:
+push: ## Push the ROS 2 image to Quay.io
 	podman push --authfile $(AUTHFILE) $(IMAGE):$(VERSION)
 
-## Apply all Kubernetes manifests, substituting the current IMAGE:VERSION
-deploy:
+deploy: ## Apply all Kubernetes manifests, substituting the current IMAGE:VERSION
 	kubectl apply -f k8s/namespace.yaml
 	@for f in k8s/configmap-*.yaml k8s/service-*.yaml k8s/deployment-*.yaml; do \
 		sed 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
 	done
 
-## Remove the namespace and all contained resources
-undeploy:
+undeploy: ## Remove the namespace and all contained resources
 	kubectl delete namespace $(NAMESPACE) --ignore-not-found
 
-## Wait for rollout then run communication verification
-test:
+test: ## Wait for rollout then run communication verification
 	kubectl rollout status deployment/zenoh-router  -n $(NAMESPACE) --timeout=120s
 	kubectl rollout status deployment/ros2-talker   -n $(NAMESPACE) --timeout=120s
 	kubectl rollout status deployment/ros2-listener -n $(NAMESPACE) --timeout=120s
 	NAMESPACE=$(NAMESPACE) bash scripts/verify.sh
 
-## Live-stream all three pods showing the message pipeline (Ctrl-C to stop)
-demo:
+demo: ## Live-stream all three pods showing the message pipeline (Ctrl-C to stop)
 	NAMESPACE=$(NAMESPACE) bash scripts/demo.sh
 
-## Stream raw logs from all three pods (Ctrl-C to stop)
-logs:
+logs: ## Stream raw logs from all three pods (Ctrl-C to stop)
 	@kubectl logs -n $(NAMESPACE) -l app=zenoh-router  --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-talker   --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-listener --prefix -f
 
-## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/, substituting IMAGE:VERSION
-deploy-bridge:
+deploy-bridge: ## Apply zenoh-bridge-ros2dds manifests (k8s/bridge/), substituting IMAGE:VERSION
 	kubectl apply -f k8s/bridge/namespace.yaml
 	@for f in k8s/bridge/configmap-*.yaml k8s/bridge/service-*.yaml k8s/bridge/deployment-*.yaml; do \
 		sed 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
 	done
 
-## Remove the bridge namespace and all contained resources
-undeploy-bridge:
+undeploy-bridge: ## Remove the bridge namespace and all contained resources
 	kubectl delete namespace $(BRIDGE_NS) --ignore-not-found
 
-## Wait for rollout then run bridge communication verification
-test-bridge:
+test-bridge: ## Wait for rollout then run bridge communication verification
 	kubectl rollout status deployment/zenoh-bridge-router -n $(BRIDGE_NS) --timeout=120s
 	kubectl rollout status deployment/ros2-dds-talker     -n $(BRIDGE_NS) --timeout=120s
 	kubectl rollout status deployment/ros2-dds-listener   -n $(BRIDGE_NS) --timeout=120s
 	NAMESPACE=$(BRIDGE_NS) bash scripts/verify-bridge.sh
 
-## Live-stream the bridge message pipeline (Ctrl-C to stop)
-demo-bridge:
+demo-bridge: ## Live-stream the bridge message pipeline (Ctrl-C to stop)
 	NAMESPACE=$(BRIDGE_NS) bash scripts/demo-bridge.sh
 
-## Stream raw logs from all bridge pods (Ctrl-C to stop)
-logs-bridge:
+logs-bridge: ## Stream raw logs from all bridge pods (Ctrl-C to stop)
 	@kubectl logs -n $(BRIDGE_NS) -l app=zenoh-bridge-router             --prefix --tail=3 &
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-talker   -c ros2-talker  --prefix --tail=3 &
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-talker   -c zenoh-bridge --prefix --tail=3 &
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c ros2-listener --prefix --tail=3 &
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c zenoh-bridge --prefix -f
 
-## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
-mirror-bridge:
+mirror-bridge: ## Mirror upstream Zenoh images to Quay.io (needs QUAY_USERNAME / QUAY_PASSWORD)
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
 		docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
@@ -96,33 +83,27 @@ mirror-bridge:
 		docker://docker.io/eclipse/zenoh:latest \
 		docker://quay.io/jianrzha/zenoh-router:latest
 
-## Build the Gazebo simulation container image
-build-gazebo:
+build-gazebo: ## Build the Gazebo simulation container image
 	podman build --platform $(PLATFORM) -t $(GAZEBO_IMAGE):$(VERSION) -f Dockerfile.gazebo .
 
-## Push the Gazebo image to Quay.io
-push-gazebo:
+push-gazebo: ## Push the Gazebo image to Quay.io
 	podman push --authfile $(AUTHFILE) $(GAZEBO_IMAGE):$(VERSION)
 
-## Apply Gazebo simulation manifests, substituting GAZEBO_IMAGE:VERSION
-deploy-gazebo:
+deploy-gazebo: ## Apply Gazebo simulation manifests, substituting GAZEBO_IMAGE:VERSION
 	kubectl apply -f k8s/gazebo/namespace.yaml
 	@for f in k8s/gazebo/configmap-*.yaml k8s/gazebo/service-*.yaml k8s/gazebo/deployment-*.yaml; do \
 		sed 's|$(GAZEBO_IMAGE):latest|$(GAZEBO_IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
 	done
 
-## Remove the Gazebo namespace and all contained resources
-undeploy-gazebo:
+undeploy-gazebo: ## Remove the Gazebo namespace and all contained resources
 	kubectl delete namespace $(GAZEBO_NS) --ignore-not-found
 
-## Wait for rollout then run Gazebo pipeline verification
-test-gazebo:
+test-gazebo: ## Wait for rollout then run Gazebo pipeline verification
 	kubectl rollout status deployment/zenoh-router -n $(GAZEBO_NS) --timeout=120s
 	kubectl rollout status deployment/gazebo-sim   -n $(GAZEBO_NS) --timeout=300s
 	NAMESPACE=$(GAZEBO_NS) bash scripts/verify-gazebo.sh
 
-## Deploy GzWeb landing page + WebSocket service/route into ros2-zenoh-gazebo
-deploy-gzweb:
+deploy-gzweb: ## Deploy GzWeb landing page + WebSocket service/route into ros2-zenoh-gazebo
 	@for f in k8s/gazebo/configmap-gz-websocket.yaml \
 	           k8s/gazebo/configmap-gzweb-html.yaml \
 	           k8s/gazebo/service-gazebo-ws.yaml \
@@ -145,8 +126,7 @@ deploy-gzweb:
 	@echo "  Landing page : https://$$(kubectl get route gzweb   -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
 	@echo "  WebSocket    : wss://$$(kubectl get route gazebo-ws -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
 
-## Remove GzWeb and WebSocket resources (keeps gazebo-sim running)
-undeploy-gzweb:
+undeploy-gzweb: ## Remove GzWeb and WebSocket resources (keeps gazebo-sim running)
 	kubectl delete deployment gzweb        -n $(GAZEBO_NS) --ignore-not-found
 	kubectl delete service    gzweb        -n $(GAZEBO_NS) --ignore-not-found
 	kubectl delete service    gazebo-ws    -n $(GAZEBO_NS) --ignore-not-found
@@ -155,32 +135,26 @@ undeploy-gzweb:
 	kubectl delete configmap  gzweb-html   -n $(GAZEBO_NS) --ignore-not-found
 	kubectl delete configmap  gz-websocket-config -n $(GAZEBO_NS) --ignore-not-found
 
-## Print the GzWeb and WebSocket Route URLs
-urls-gzweb:
+urls-gzweb: ## Print the GzWeb and WebSocket Route URLs
 	@echo "GzWeb landing page : https://$$(kubectl get route gzweb   -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
 	@echo "WebSocket endpoint : wss://$$(kubectl get route gazebo-ws -n $(GAZEBO_NS) -o jsonpath='{.spec.host}')"
 
-## Live-stream all Gazebo simulation pod logs (Ctrl-C to stop)
-demo-gazebo:
+demo-gazebo: ## Live-stream all Gazebo simulation pod logs (Ctrl-C to stop)
 	NAMESPACE=$(GAZEBO_NS) bash scripts/demo-gazebo.sh
 
-## Stream raw logs from all Gazebo pods (Ctrl-C to stop)
-logs-gazebo:
+logs-gazebo: ## Stream raw logs from all Gazebo pods (Ctrl-C to stop)
 	@kubectl logs -n $(GAZEBO_NS) -l app=zenoh-router              --prefix --tail=3 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c gazebo-sim   --prefix --tail=3 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c ros-gz-bridge --prefix --tail=3 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=gazebo-sim -c zenoh-bridge  --prefix -f
 
-## Build the Nav2 container image
-build-nav2:
+build-nav2: ## Build the Nav2 container image
 	podman build --platform $(PLATFORM) -t $(NAV2_IMAGE):$(VERSION) -f Dockerfile.nav2 .
 
-## Push the Nav2 image to Quay.io
-push-nav2:
+push-nav2: ## Push the Nav2 image to Quay.io
 	podman push --authfile $(AUTHFILE) $(NAV2_IMAGE):$(VERSION)
 
-## Apply updated Gazebo world + Nav2 manifests, restart gazebo-sim, wait for Nav2
-deploy-nav2:
+deploy-nav2: ## Deploy Nav2 patrol (restarts gazebo-sim + nav2 together — required for Zenoh routes)
 	@echo "Applying updated Gazebo configmaps (warehouse world + /scan bridge)..."
 	kubectl apply -f k8s/gazebo/configmap-robot-model.yaml
 	kubectl apply -f k8s/gazebo/configmap-gz-bridge-config.yaml
@@ -196,13 +170,11 @@ deploy-nav2:
 	@echo "Nav2 deployed. Mission patrol will begin ~60 s after pod start."
 	@echo "Watch with: make demo-nav2"
 
-## Remove Nav2 deployment and ConfigMaps (keeps gazebo-sim running)
-undeploy-nav2:
+undeploy-nav2: ## Remove Nav2 deployment and ConfigMaps (keeps gazebo-sim running)
 	kubectl delete deployment nav2 -n $(GAZEBO_NS) --ignore-not-found
 	kubectl delete configmap nav2-params nav2-map nav2-mission -n $(GAZEBO_NS) --ignore-not-found
 
-## Stream labeled logs from nav2-server and mission containers
-demo-nav2:
+demo-nav2: ## Stream labeled logs from nav2-server and mission containers
 	@cleanup() { kill 0 2>/dev/null || true; }; trap cleanup INT TERM EXIT; \
 	kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c nav2-server --follow --tail=0 2>/dev/null \
 	    | awk '{ print "[nav2   ] " $$0; fflush() }' & \
@@ -212,22 +184,24 @@ demo-nav2:
 	    | awk '{ print "[bridge ] " $$0; fflush() }' & \
 	wait
 
-## Stream raw logs from Nav2 pod
-logs-nav2:
+logs-nav2: ## Stream raw logs from Nav2 pod
 	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c nav2-server  --prefix --tail=5 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c mission      --prefix --tail=5 &
 	@kubectl logs -n $(GAZEBO_NS) -l app=nav2 -c zenoh-bridge --prefix -f
 
-## Show this help
-help:
-	@grep -E '^## ' Makefile | sed 's/## /  /'
+help: ## Show this help
+	@echo "Usage: make [target] [VAR=value ...]"
 	@echo ""
-	@echo "Variables (override with make VAR=value):"
-	@echo "  IMAGE=$(IMAGE)"
-	@echo "  GAZEBO_IMAGE=$(GAZEBO_IMAGE)"
-	@echo "  VERSION=$(VERSION)"
-	@echo "  NAMESPACE=$(NAMESPACE)"
-	@echo "  BRIDGE_NS=$(BRIDGE_NS)"
-	@echo "  GAZEBO_NS=$(GAZEBO_NS)"
-	@echo "  NAV2_IMAGE=$(NAV2_IMAGE)"
-	@echo "  PLATFORM=$(PLATFORM)"
+	@echo "Targets:"
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' Makefile \
+	  | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Variables (current values):"
+	@echo "  IMAGE        = $(IMAGE)"
+	@echo "  GAZEBO_IMAGE = $(GAZEBO_IMAGE)"
+	@echo "  NAV2_IMAGE   = $(NAV2_IMAGE)"
+	@echo "  VERSION      = $(VERSION)"
+	@echo "  NAMESPACE    = $(NAMESPACE)"
+	@echo "  BRIDGE_NS    = $(BRIDGE_NS)"
+	@echo "  GAZEBO_NS    = $(GAZEBO_NS)"
+	@echo "  PLATFORM     = $(PLATFORM)"
