@@ -124,11 +124,51 @@ spec:
     interval: 15s
 ```
 
-### Sidecar Exporter Pattern
+### Direct Prometheus Scrape — Zenoh Router Metrics
 
-The bridge REST admin space does not emit a standard `/metrics` path with per-route counters. A **sidecar container** that polls `/@/local/ros2/route/**` and `/@/local/metrics`, then re-exposes as Prometheus format on `/metrics:9090`, is the practical integration path.
+The **Zenoh router** `/metrics` endpoint is already in `application/openmetrics-text` format, which Prometheus understands natively. No sidecar or exporter is needed for router-level transport metrics — configure Prometheus to scrape it directly:
 
-> No community-maintained Prometheus exporter specifically for zenoh-bridge-ros2dds was confirmed by research — custom development is required for per-route/per-topic granularity beyond router-level counters.
+```yaml
+# prometheus.yml scrape config (standalone Prometheus)
+scrape_configs:
+- job_name: zenoh-router
+  static_configs:
+  - targets: ['<router-pod-IP>:8000']
+  metrics_path: /@/local/metrics
+```
+
+Or with a PodMonitor targeting the router pod:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: zenoh-router-monitor
+spec:
+  selector:
+    matchLabels:
+      app: zenoh-router
+  podMetricsEndpoints:
+  - port: rest            # port 8000, REST plugin
+    path: /@/local/metrics
+    interval: 15s
+```
+
+This covers all Layer 2 metrics (drop counts, byte counters, session count) with no additional tooling.
+
+### Sidecar Exporter Pattern — Bridge Route & Discovery State
+
+The Zenoh **router** metrics endpoint is directly scrapeable (see above), but the **bridge** admin space (`@/local/ros2/route/**`, `@/local/ros2/node/**`) returns JSON, not OpenMetrics. A sidecar exporter is required only to surface per-route or per-topic bridge state as Prometheus metrics:
+
+```
+sidecar polls: GET http://localhost:8000/@/local/ros2/route/**  (JSON)
+sidecar polls: GET http://localhost:8000/@/local/ros2/node/**   (JSON)
+sidecar exposes: /metrics:9090  (OpenMetrics format)
+```
+
+The PodMonitor above (targeting `app: zenoh-bridge-ros2dds`) then scrapes the sidecar's `/metrics` endpoint.
+
+> No community-maintained Prometheus exporter specifically for zenoh-bridge-ros2dds was confirmed by research — custom development is required for per-route/per-topic granularity from the bridge admin space. Router-level metrics (drops, throughput, sessions) need no custom exporter.
 
 ---
 
