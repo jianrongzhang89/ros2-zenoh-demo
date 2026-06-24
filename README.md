@@ -416,6 +416,11 @@ CI pipeline: builds and pushes the `ros2-zenoh-demo` image for `linux/amd64` and
 
 ## OpenShift-Specific Notes
 
+**OVN-Kubernetes blocks multicast (critical).**
+See [docs/zenoh-ocp-ovn-multicast-workaround.md](docs/zenoh-ocp-ovn-multicast-workaround.md) for
+the root cause and the reference ConfigMap. Every deployment in this repo already applies the
+workaround; this note exists so you know why `scouting.multicast: false` appears in every config.
+
 **`runAsUser` must not be set.**
 OpenShift's `restricted-v2` SCC assigns UIDs from a per-namespace range (e.g. `1000770000–1000779999`). Setting `runAsUser: 1001` conflicts with this range and causes a `FailedCreate` event. The Dockerfile creates UID 1001 with `GID 0` and `g=u` permissions so the pod remains functional regardless of which UID OpenShift assigns at runtime.
 
@@ -431,6 +436,16 @@ Clusters with `imagePullPolicy` restrictions or no Docker Hub egress need the `e
 ---
 
 ## Gotchas
+
+**OCP/OVN blocks multicast — always use unicast connect endpoints.**
+OVN-Kubernetes (OCP's default CNI) drops UDP multicast between pods by default. Zenoh's
+peer-discovery (scouting) uses UDP multicast to `224.0.0.224:7446`. Without the workaround,
+pods start cleanly but never exchange messages — no error is logged, which makes this the hardest
+failure mode to diagnose. The fix is already applied in every ConfigMap in this repo
+(`scouting.multicast.enabled: false` + explicit `connect.endpoints`). See
+[docs/zenoh-ocp-ovn-multicast-workaround.md](docs/zenoh-ocp-ovn-multicast-workaround.md) for
+the full explanation, diagnostic steps, and the reference ConfigMap at
+[`k8s/configmap-zenoh-ocp.yaml`](k8s/configmap-zenoh-ocp.yaml).
 
 **`ZENOH_SESSION_CONFIG_URI`, not `ZENOH_CONFIG`.**
 `rmw_zenoh_cpp` reads its own env var. `ZENOH_CONFIG` is silently ignored; the library falls back to its bundled default which hardcodes `tcp/localhost:7447`.

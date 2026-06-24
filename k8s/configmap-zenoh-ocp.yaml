@@ -1,0 +1,75 @@
+# Reference ConfigMap for Zenoh on OCP/OVN
+#
+# OCP's OVN-Kubernetes CNI blocks multicast by default, which breaks Zenoh's
+# peer-discovery (scouting) mechanism. This file provides ready-to-use configs
+# for both deployment patterns in this repo.
+#
+# Apply with: kubectl apply -f k8s/configmap-zenoh-ocp.yaml
+#
+# See docs/zenoh-ocp-ovn-multicast-workaround.md for the full explanation.
+---
+# Pattern 1: rmw_zenoh_cpp clients (talker / listener pods)
+# Namespace: ros2-zenoh
+# Referenced by: ZENOH_SESSION_CONFIG_URI=/etc/zenoh/zenoh-client.json5
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zenoh-ocp-client-config
+  namespace: ros2-zenoh
+  annotations:
+    # Remove this annotation and use the OVN multicast route instead only if
+    # your cluster-admin has enabled k8s.ovn.org/multicast-enabled on the namespace.
+    ovn-workaround: "unicast-connect-endpoints"
+data:
+  zenoh-client.json5: |
+    {
+      // Client mode: delegates all routing to the central zenoh-router pod.
+      mode: "client",
+
+      // Explicit TCP endpoint — bypasses multicast scouting entirely.
+      // "zenoh-router" resolves to the ClusterIP Service in this namespace.
+      connect: {
+        endpoints: ["tcp/zenoh-router:7447"]
+      },
+
+      // REQUIRED on OCP/OVN: OVN-Kubernetes drops UDP multicast between pods.
+      // Without this, Zenoh retries multicast discovery indefinitely and nodes
+      // never exchange messages, with no error logged.
+      scouting: {
+        multicast: { enabled: false }
+      },
+
+      // Shared memory is a same-host optimisation and has no effect across pods.
+      // Disable explicitly to avoid /dev/shm warnings on memory-constrained pods.
+      transport: {
+        shared_memory: { enabled: false }
+      }
+    }
+---
+# Pattern 2: zenoh-bridge-ros2dds sidecars
+# Namespace: ros2-zenoh-bridge
+# Referenced by: args: ["-c", "/etc/zenoh/bridge.json5"]
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zenoh-ocp-bridge-config
+  namespace: ros2-zenoh-bridge
+  annotations:
+    ovn-workaround: "unicast-connect-endpoints"
+data:
+  bridge.json5: |
+    {
+      // Bridge sidecars run as Zenoh clients connecting to the central router.
+      mode: "client",
+
+      // "zenoh-bridge-router" is the ClusterIP Service for the router pod
+      // in the ros2-zenoh-bridge namespace.
+      connect: {
+        endpoints: ["tcp/zenoh-bridge-router:7447"]
+      },
+
+      // REQUIRED on OCP/OVN: same reason as above — OVN blocks multicast.
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
