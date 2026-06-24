@@ -1,0 +1,22 @@
+{
+  // Scenario 4: allow by regex namespace — only .*/sensor/.* topics bridged.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      allow: {
+        publishers:      [".*/sensor/.*"],
+        subscribers:     [".*/sensor/.*"],
+        service_servers: [],
+        service_clients: [],
+        action_servers:  [],
+        action_clients:  []
+      }
+    }
+  }
+}
