@@ -1,0 +1,28 @@
+{
+  // Scenario 7: allow + pub_max_frequencies rate limiting.
+  // /chatter capped from 10 Hz → 1 Hz.
+  // /system/status capped from 1 Hz → 0.5 Hz.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      allow: {
+        publishers:      ["/chatter", ".*/status"],
+        subscribers:     ["/chatter", ".*/status"],
+        service_servers: [],
+        service_clients: [],
+        action_servers:  [],
+        action_clients:  []
+      },
+      pub_max_frequencies: [
+        "/chatter=1",
+        ".*/status=0.5"
+      ]
+    }
+  }
+}

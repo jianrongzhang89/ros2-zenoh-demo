@@ -1,0 +1,17 @@
+{
+  // Scenario 6: scope prefix — all DDS topics are prefixed "robot-1" in Zenoh key space.
+  //   DDS /chatter     → Zenoh  robot-1/chatter      (no rt/ prefix)
+  //   DDS /sensor/scan → Zenoh  robot-1/sensor/scan
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      namespace: "/robot-1"
+    }
+  }
+}

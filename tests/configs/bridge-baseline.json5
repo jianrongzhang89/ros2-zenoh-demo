@@ -1,0 +1,11 @@
+{
+  // Scenario 1 (baseline) and Scenario 8 (router ACL, bridge side).
+  // No allow/deny — all DDS entities are bridged.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  }
+}

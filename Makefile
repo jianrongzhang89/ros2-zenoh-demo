@@ -7,7 +7,9 @@ AUTHFILE     ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test demo logs \
         deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
-        mirror-bridge help
+        mirror-bridge \
+        test-filtering test-filtering-scenario \
+        help
 
 all: build push deploy test
 
@@ -77,7 +79,16 @@ logs-bridge:
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c ros2-listener --prefix --tail=3 &
 	@kubectl logs -n $(BRIDGE_NS) -l app=ros2-dds-listener -c zenoh-bridge --prefix -f
 
+## Run all 8 bridge filtering scenarios locally (requires: podman machine running)
+test-filtering:
+	bash scripts/test-bridge-filtering.sh
+
+## Run a single filtering scenario: make test-filtering-scenario N=2  (N=1..8)
+test-filtering-scenario:
+	SCENARIO=$(N) bash scripts/test-bridge-filtering.sh
+
 ## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
+## eclipse/zenoh:latest is also used by the local filtering tests (Scenario 8 router ACL).
 mirror-bridge:
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \

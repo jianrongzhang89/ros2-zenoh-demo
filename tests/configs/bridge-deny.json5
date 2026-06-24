@@ -1,0 +1,26 @@
+{
+  // Scenario 5: deny blacklist + Issue #241 probe.
+  // deny.publishers [".*/sensor/.*"]: talker bridge won't publish sensor topics to Zenoh.
+  // deny.subscribers ["/chatter"]: listener bridge should NOT subscribe /chatter from Zenoh.
+  //   If honoured  → /chatter blocked (bug fixed).
+  //   If ignored   → /chatter flows  (Issue #241 present).
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      deny: {
+        publishers:      [".*/sensor/.*"],
+        subscribers:     ["/chatter"],
+        service_servers: [],
+        service_clients: [],
+        action_servers:  [],
+        action_clients:  []
+      }
+    }
+  }
+}

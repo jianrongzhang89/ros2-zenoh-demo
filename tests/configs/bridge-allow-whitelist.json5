@@ -1,0 +1,24 @@
+{
+  // Scenario 2: allow whitelist — only /chatter and /system/status are bridged.
+  // In zenoh-bridge-ros2dds 1.x all plugin-specific fields (allow, deny, scope,
+  // pub_max_frequencies) live under plugins.ros2dds, not at the root level.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      allow: {
+        publishers:      ["/chatter", ".*/status"],
+        subscribers:     ["/chatter", ".*/status"],
+        service_servers: [],
+        service_clients: [],
+        action_servers:  [],
+        action_clients:  []
+      }
+    }
+  }
+}

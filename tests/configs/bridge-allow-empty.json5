@@ -1,0 +1,22 @@
+{
+  // Scenario 3: allow with all-empty lists — zero topics bridged.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/zenoh-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  plugins: {
+    ros2dds: {
+      allow: {
+        publishers:      [],
+        subscribers:     [],
+        service_servers: [],
+        service_clients: [],
+        action_servers:  [],
+        action_clients:  []
+      }
+    }
+  }
+}

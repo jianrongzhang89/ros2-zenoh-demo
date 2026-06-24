@@ -1,0 +1,99 @@
+services:
+
+  # Plain Zenoh router — no DDS domain.
+  # Mounts ROUTER_CONFIG from the host so each test scenario can swap it.
+  # Port 7447: Zenoh session endpoint for bridge clients.
+  # Port 8000: REST API for key-space inspection (used in Scenario 6 scope test).
+  zenoh-router:
+    image: docker.io/eclipse/zenoh:latest
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7447:7447/tcp"
+      - "8000:8000/tcp"
+    volumes:
+      - ${ROUTER_CONFIG:-./tests/configs/router-default.json5}:/etc/zenoh/router.json5:ro
+    networks:
+      - bridge-test-net
+
+  # ROS 2 talker — publishes four test topics via DDS (localhost only).
+  # multi-pub.sh replaces the demo_nodes_cpp talker to get 10 Hz on /chatter
+  # instead of the default 1 Hz, making rate-limit tests meaningful.
+  ros2-talker:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+      # ROS_NAMESPACE is passed through from the host when set (used by Scenario 6).
+      # When empty (default), topics are published in the root / namespace as usual.
+      ROS_NAMESPACE: ${ROS_NS:-}
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        echo '[talker] Waiting for bridge sidecar to settle...' &&
+        sleep 8 &&
+        exec bash /tests/multi-pub.sh
+      "
+    depends_on:
+      - zenoh-router
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - bridge-test-net
+
+  # Bridge sidecar for the talker pod.
+  # network_mode: service:ros2-talker — shares ros2-talker's network namespace so the
+  # bridge sees DDS traffic on lo (the same mechanism as a Kubernetes pod sidecar).
+  # Mounts BRIDGE_CONFIG from the host; swapping it and restarting this container
+  # is all that's needed to change scenarios.
+  zenoh-bridge-talker:
+    image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+    platform: linux/arm64
+    network_mode: "service:ros2-talker"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ${BRIDGE_CONFIG:-./tests/configs/bridge-baseline.json5}:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - ros2-talker
+
+  # ROS 2 listener — DDS subscriber on localhost only.
+  # The test script execs into this container to check which topics arrive.
+  # demo_nodes_cpp listener provides a visible stream for manual inspection.
+  ros2-listener:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        sleep 10 &&
+        exec ros2 run demo_nodes_cpp listener
+      "
+    depends_on:
+      - zenoh-router
+    networks:
+      - bridge-test-net
+
+  # Bridge sidecar for the listener pod.
+  # Shares ros2-listener's network namespace so it sees DDS subscribers on lo
+  # and delivers inbound Zenoh messages back to DDS.
+  zenoh-bridge-listener:
+    image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+    platform: linux/arm64
+    network_mode: "service:ros2-listener"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ${BRIDGE_CONFIG:-./tests/configs/bridge-baseline.json5}:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - ros2-listener
+
+networks:
+  bridge-test-net:
+    driver: bridge
