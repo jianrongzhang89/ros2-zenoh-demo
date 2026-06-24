@@ -102,8 +102,12 @@ apply_acl() {
   echo "  [apply] Switching edge-router to ACL config..."
   kubectl apply -f "$MANIFESTS/acl/deployment-edge-router-acl.yaml"
   kubectl rollout status deployment/edge-router -n "$NAMESPACE" --timeout="${ROLLOUT_TIMEOUT}s"
-  echo "  [settle] Waiting ${SETTLE}s for bridge DDS re-discovery..."
-  sleep "$SETTLE"
+  # Allow extra drain time: the old edge-router session may have buffered sensor
+  # messages in the cloud-router's queue that arrive briefly after the ACL takes
+  # effect.  35 s is enough for those to flush before block assertions run.
+  local acl_settle=$(( SETTLE + 15 ))
+  echo "  [settle] Waiting ${acl_settle}s for ACL to take full effect and drain in-flight messages..."
+  sleep "$acl_settle"
 }
 
 restore_base_edge() {
