@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: federation-configs
+  namespace: ros2-zenoh-federation
+data:
+
+  # ── Router configs ────────────────────────────────────────────────────────
+  # cloud router: accepts Zenoh sessions on 7447 from cloud bridges AND from
+  # the edge router's outbound federation link (same port, same listener).
+  router-cloud.json5: |
+    {
+      mode: "router",
+      listen: {
+        endpoints: ["tcp/0.0.0.0:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      },
+      adminspace: {
+        enabled: true,
+        permissions: {
+          read:  true,
+          write: false
+        }
+      },
+      plugins: {
+        rest: {
+          __required__: false,
+          http_port: "8001"
+        }
+      }
+    }
+
+  # edge router (no ACL): listens on 7448 for edge bridge clients; establishes
+  # the federation link to cloud-router:7447 via the cluster Service.
+  router-edge.json5: |
+    {
+      mode: "router",
+      listen: {
+        endpoints: ["tcp/0.0.0.0:7448"]
+      },
+      connect: {
+        endpoints: ["tcp/cloud-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      },
+      adminspace: {
+        enabled: true,
+        permissions: {
+          read:  true,
+          write: false
+        }
+      },
+      plugins: {
+        rest: {
+          __required__: false,
+          http_port: "8002"
+        }
+      }
+    }
+
+  # edge router (ACL): same as above, plus access_control that denies
+  # sensor/** egress across the router-to-router federation link (Scenario F2).
+  router-edge-acl.json5: |
+    {
+      mode: "router",
+      listen: {
+        endpoints: ["tcp/0.0.0.0:7448"]
+      },
+      connect: {
+        endpoints: ["tcp/cloud-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      },
+      adminspace: {
+        enabled: true,
+        permissions: {
+          read:  true,
+          write: false
+        }
+      },
+      plugins: {
+        rest: {
+          __required__: false,
+          http_port: "8002"
+        }
+      },
+      access_control: {
+        enabled: true,
+        default_permission: "allow",
+        rules: [
+          {
+            id:         "block-sensor-cloud-egress",
+            messages:   ["put", "declare_subscriber"],
+            flows:      ["egress"],
+            permission: "deny",
+            key_exprs:  ["sensor/**"]
+          }
+        ],
+        subjects: [
+          {
+            id: "all-peers"
+          }
+        ],
+        policies: [
+          {
+            rules:    ["block-sensor-cloud-egress"],
+            subjects: ["all-peers"]
+          }
+        ]
+      }
+    }
+
+  # ── Bridge configs ────────────────────────────────────────────────────────
+  # edge bridge: connects to the edge router inside the same pod's network namespace
+  bridge-edge.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/edge-router:7448"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
+
+  # cloud bridge: connects to the cloud router inside the same pod's network namespace
+  bridge-cloud.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/cloud-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
+
+  # ── Talker script ─────────────────────────────────────────────────────────
+  # Republished here from tests/multi-pub.sh so the edge-talker pod can
+  # execute it without a host volume mount.
+  multi-pub.sh: |
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if ! command -v ros2 &>/dev/null && [ -f /opt/ros/jazzy/setup.bash ]; then
+      set +u
+      source /opt/ros/jazzy/setup.bash
+      set -u
+    fi
+    echo "[multi-pub] Starting publishers..."
+    ros2 topic pub chatter       std_msgs/msg/String "{data: chatter}" --rate 10 &
+    PID_CHATTER=$!
+    ros2 topic pub sensor/scan   std_msgs/msg/String "{data: scan}"    --rate 10 &
+    PID_SCAN=$!
+    ros2 topic pub sensor/camera std_msgs/msg/String "{data: camera}"  --rate 10 &
+    PID_CAMERA=$!
+    ros2 topic pub system/status std_msgs/msg/String "{data: status}"  --rate 1  &
+    PID_STATUS=$!
+    echo "[multi-pub] Publishing on chatter (10 Hz), sensor/scan (10 Hz), sensor/camera (10 Hz), system/status (1 Hz)"
+    trap "kill $PID_CHATTER $PID_SCAN $PID_CAMERA $PID_STATUS 2>/dev/null; exit 0" SIGTERM SIGINT
+    wait $PID_CHATTER $PID_SCAN $PID_CAMERA $PID_STATUS

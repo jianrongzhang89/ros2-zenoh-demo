@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-router
+  namespace: ros2-zenoh-federation
+spec:
+  selector:
+    app: cloud-router
+  ports:
+    - name: zenoh
+      port: 7447
+      targetPort: 7447
+      protocol: TCP
+    - name: rest
+      port: 8001
+      targetPort: 8001
+      protocol: TCP

@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-talker
+  namespace: ros2-zenoh-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-talker
+  template:
+    metadata:
+      labels:
+        app: edge-talker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      initContainers:
+        - name: wait-for-edge-router
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
+          command:
+            - python3
+            - -c
+            - |
+              import socket, time, sys
+              print("Waiting for edge-router:7448 ...")
+              while True:
+                  try:
+                      s = socket.create_connection(("edge-router", 7448), timeout=2)
+                      s.close()
+                      print("edge-router is up.")
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      containers:
+        - name: ros2-talker
+          image: quay.io/jianrzha/ros2-zenoh-demo:latest
+          command:
+            - bash
+            - -c
+            - |
+              set +u && source /opt/ros/jazzy/setup.bash && set -u
+              exec bash /tests/multi-pub.sh
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          volumeMounts:
+            - name: configs
+              mountPath: /tests/multi-pub.sh
+              subPath: multi-pub.sh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+        - name: zenoh-bridge
+          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          args: ["-c", "/etc/zenoh/bridge.json5"]
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+          volumeMounts:
+            - name: configs
+              mountPath: /etc/zenoh/bridge.json5
+              subPath: bridge-edge.json5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: configs
+          configMap:
+            name: federation-configs
+            defaultMode: 0755
