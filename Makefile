@@ -9,6 +9,7 @@ AUTHFILE     ?= $(HOME)/.config/containers/auth.json
         deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
         mirror-bridge \
         test-filtering test-filtering-scenario \
+        test-federation test-federation-scenario \
         help
 
 all: build push deploy test
@@ -86,6 +87,14 @@ test-filtering:
 ## Run a single filtering scenario: make test-filtering-scenario N=2  (N=1..8)
 test-filtering-scenario:
 	SCENARIO=$(N) bash scripts/test-bridge-filtering.sh
+
+## Run all router federation scenarios locally (requires: podman machine running)
+test-federation:
+	bash scripts/test-federation.sh
+
+## Run a single federation scenario: make test-federation-scenario N=F1  (N=F1|F2|F3)
+test-federation-scenario:
+	SCENARIO=$(N) bash scripts/test-federation.sh
 
 ## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
 ## eclipse/zenoh:latest is also used by the local filtering tests (Scenario 8 router ACL).

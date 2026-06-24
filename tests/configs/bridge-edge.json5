@@ -1,0 +1,13 @@
+{
+  // Bridge config for the edge-tier talker sidecar (federation tests).
+  // Connects to the edge router on port 7448 (the client-facing port).
+  // No filtering — all DDS entities on the edge are bridged to Zenoh;
+  // topic selection is handled by the edge router's ACL in Scenario F2.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/edge-router:7448"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  }
+}

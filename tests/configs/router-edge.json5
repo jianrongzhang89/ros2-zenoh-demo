@@ -1,0 +1,31 @@
+{
+  // Edge-tier router for federation tests (Scenarios F1, F3).
+  // Listens on 7448 for edge bridge clients.
+  // Connects to the cloud router at cloud-router:7447 to establish the
+  // router-to-router federation link.  Both routers exchange routing tables
+  // across this link; no additional plugin or configuration is required.
+  // REST plugin on port 8002 (host-exposed) for admin space inspection in F3.
+  mode: "router",
+  listen: {
+    endpoints: ["tcp/0.0.0.0:7448"]
+  },
+  connect: {
+    endpoints: ["tcp/cloud-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  adminspace: {
+    enabled: true,
+    permissions: {
+      read:  true,
+      write: false
+    }
+  },
+  plugins: {
+    rest: {
+      __required__: false,
+      http_port: "8002"
+    }
+  }
+}

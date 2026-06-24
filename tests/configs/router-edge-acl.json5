@@ -1,0 +1,63 @@
+{
+  // Edge-tier router with ACL for federation Scenario F2.
+  // Same federation link as router-edge.json5, plus an access_control block that
+  // denies sensor/** egress — preventing those topics from being forwarded across
+  // the router-to-router link to the cloud router.
+  //
+  // The subject wildcard (no filter fields) is documented to match all sessions in
+  // Zenoh 1.9.0.  Scenario F2 confirms empirically whether this also covers the
+  // router-to-router session.  See docs/zenoh-router-federation-proposal.md §Risk.
+  //
+  // Zenoh key mapping (zenoh-bridge-ros2dds v1.9.0, no namespace):
+  //   DDS /sensor/scan   → Zenoh sensor/scan
+  //   DDS /sensor/camera → Zenoh sensor/camera
+  //   DDS /chatter       → Zenoh chatter
+  mode: "router",
+  listen: {
+    endpoints: ["tcp/0.0.0.0:7448"]
+  },
+  connect: {
+    endpoints: ["tcp/cloud-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  adminspace: {
+    enabled: true,
+    permissions: {
+      read:  true,
+      write: false
+    }
+  },
+  plugins: {
+    rest: {
+      __required__: false,
+      http_port: "8002"
+    }
+  },
+  access_control: {
+    enabled: true,
+    default_permission: "allow",
+    rules: [
+      {
+        id:         "block-sensor-cloud-egress",
+        messages:   ["put", "declare_subscriber"],
+        flows:      ["egress"],
+        permission: "deny",
+        key_exprs:  ["sensor/**"]
+      }
+    ],
+    subjects: [
+      {
+        id: "all-peers"
+        // no filter fields = wildcard, matches every session including the federation link
+      }
+    ],
+    policies: [
+      {
+        rules:    ["block-sensor-cloud-egress"],
+        subjects: ["all-peers"]
+      }
+    ]
+  }
+}
