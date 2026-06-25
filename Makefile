@@ -1,14 +1,17 @@
-IMAGE        ?= quay.io/jianrzha/ros2-zenoh-demo
-VERSION      ?= 0.0.1
-NAMESPACE    ?= ros2-zenoh
-BRIDGE_NS    ?= ros2-zenoh-bridge
-PLATFORM     ?= linux/amd64,linux/arm64
-AUTHFILE     ?= $(HOME)/.config/containers/auth.json
+IMAGE          ?= quay.io/jianrzha/ros2-zenoh-demo
+VERSION        ?= 0.0.1
+NAMESPACE      ?= ros2-zenoh
+BRIDGE_NS      ?= ros2-zenoh-bridge
+FEDERATION_NS  ?= ros2-zenoh-federation
+PLATFORM       ?= linux/amd64,linux/arm64
+AUTHFILE       ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test demo logs \
         deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
         mirror-bridge \
         test-filtering test-filtering-scenario \
+        test-federation test-federation-scenario \
+        deploy-federation undeploy-federation test-federation-ocp test-federation-ocp-scenario \
         help
 
 all: build push deploy test
@@ -86,6 +89,33 @@ test-filtering:
 ## Run a single filtering scenario: make test-filtering-scenario N=2  (N=1..8)
 test-filtering-scenario:
 	SCENARIO=$(N) bash scripts/test-bridge-filtering.sh
+
+## Run all router federation scenarios locally (requires: podman machine running)
+test-federation:
+	bash scripts/test-federation.sh
+
+## Run a single federation scenario: make test-federation-scenario N=F1  (N=F1|F2|F3)
+test-federation-scenario:
+	SCENARIO=$(N) bash scripts/test-federation.sh
+
+## Apply federation manifests to k8s/federation/ (namespace + configmap + routers + pods)
+deploy-federation:
+	kubectl apply -f k8s/federation/namespace.yaml
+	@for f in k8s/federation/configmap-*.yaml k8s/federation/service-*.yaml k8s/federation/deployment-*.yaml; do \
+		kubectl apply -f $$f; \
+	done
+
+## Remove the federation namespace and all contained resources
+undeploy-federation:
+	kubectl delete namespace $(FEDERATION_NS) --ignore-not-found
+
+## Run all federation scenarios against a live OpenShift/Kubernetes cluster
+test-federation-ocp:
+	NAMESPACE=$(FEDERATION_NS) bash scripts/test-federation-ocp.sh
+
+## Run a single OCP federation scenario: make test-federation-ocp-scenario N=F1  (N=F1|F2|F3)
+test-federation-ocp-scenario:
+	NAMESPACE=$(FEDERATION_NS) SCENARIO=$(N) bash scripts/test-federation-ocp.sh
 
 ## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
 ## eclipse/zenoh:latest is also used by the local filtering tests (Scenario 8 router ACL).

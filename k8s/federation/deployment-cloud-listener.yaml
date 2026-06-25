@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-listener
+  namespace: ros2-zenoh-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloud-listener
+  template:
+    metadata:
+      labels:
+        app: cloud-listener
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      initContainers:
+        - name: wait-for-cloud-router
+          # Use the zenoh image (Alpine-based, confirmed amd64 on this cluster).
+          # Alpine busybox provides nc for a lightweight TCP readiness check.
+          image: docker.io/eclipse/zenoh:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for cloud-router:7447..."
+              until nc -z cloud-router 7447 2>/dev/null; do sleep 1; done
+              echo "cloud-router is up."
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      containers:
+        - name: ros2-listener
+          # Pin to 0.0.7 — the amd64 build. The :latest tag on Quay is arm64.
+          image: quay.io/jianrzha/ros2-zenoh-demo:0.0.7
+          command:
+            - bash
+            - -c
+            - |
+              set +u && source /opt/ros/jazzy/setup.bash && set -u
+              exec ros2 run demo_nodes_cpp listener
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+            - name: ROS_HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+        - name: zenoh-bridge
+          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          args: ["-c", "/etc/zenoh/bridge.json5"]
+          env:
+            - name: ROS_AUTOMATIC_DISCOVERY_RANGE
+              value: LOCALHOST
+          volumeMounts:
+            - name: configs
+              mountPath: /etc/zenoh/bridge.json5
+              subPath: bridge-cloud.json5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+      volumes:
+        - name: configs
+          configMap:
+            name: federation-configs

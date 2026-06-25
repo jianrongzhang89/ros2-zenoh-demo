@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-router
+  namespace: ros2-zenoh-federation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-router
+  template:
+    metadata:
+      labels:
+        app: edge-router
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: zenoh-router
+          image: docker.io/eclipse/zenoh:latest
+          # Scenario F1/F3: no ACL — all topics cross the federation link.
+          # For Scenario F2, apply acl/deployment-edge-router-acl.yaml instead.
+          args: ["-c", "/etc/zenoh/router-edge.json5"]
+          ports:
+            - containerPort: 7448
+              protocol: TCP
+              name: zenoh
+            - containerPort: 8002
+              protocol: TCP
+              name: rest
+          readinessProbe:
+            tcpSocket:
+              port: 7448
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7448
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: configs
+              mountPath: /etc/zenoh
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: configs
+          configMap:
+            name: federation-configs

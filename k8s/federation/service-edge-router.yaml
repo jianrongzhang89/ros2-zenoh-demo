@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-router
+  namespace: ros2-zenoh-federation
+spec:
+  selector:
+    app: edge-router
+  ports:
+    - name: zenoh
+      port: 7448
+      targetPort: 7448
+      protocol: TCP
+    - name: rest
+      port: 8002
+      targetPort: 8002
+      protocol: TCP

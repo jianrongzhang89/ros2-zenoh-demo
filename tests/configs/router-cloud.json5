@@ -1,0 +1,28 @@
+{
+  // Cloud-tier router for federation tests (Scenarios F1–F3).
+  // Accepts connections from:
+  //   - cloud bridge clients on port 7447
+  //   - the edge router's outbound federation link (also port 7447)
+  // No ACL — all topics forwarded from the edge are allowed to cloud subscribers.
+  // REST plugin on port 8001 (host-exposed) for admin space inspection in F3.
+  mode: "router",
+  listen: {
+    endpoints: ["tcp/0.0.0.0:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  },
+  adminspace: {
+    enabled: true,
+    permissions: {
+      read:  true,
+      write: false
+    }
+  },
+  plugins: {
+    rest: {
+      __required__: false,
+      http_port: "8001"
+    }
+  }
+}

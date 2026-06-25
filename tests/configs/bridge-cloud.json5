@@ -1,0 +1,13 @@
+{
+  // Bridge config for the cloud-tier listener sidecar (federation tests).
+  // Connects to the cloud router on port 7447.
+  // No filtering — the cloud bridge subscribes to everything the cloud router offers;
+  // what actually arrives depends on what the edge router forwards.
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/cloud-router:7447"]
+  },
+  scouting: {
+    multicast: { enabled: false }
+  }
+}
