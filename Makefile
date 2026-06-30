@@ -1,5 +1,10 @@
-IMAGE          ?= quay.io/jianrzha/ros2-zenoh-demo
+QUAY_ORG       ?= ecosystem-appeng
+DEMO_ORG       ?= jianrzha
+IMAGE          ?= quay.io/$(DEMO_ORG)/ros2-zenoh-demo
+ROUTER_IMAGE   ?= quay.io/$(QUAY_ORG)/zenoh-router
+BRIDGE_IMAGE   ?= quay.io/$(QUAY_ORG)/zenoh-bridge-ros2dds
 VERSION        ?= 0.0.1
+ECLIPSE_TAG    ?= 1.9.0
 NAMESPACE      ?= ros2-zenoh
 BRIDGE_NS      ?= ros2-zenoh-bridge
 FEDERATION_NS  ?= ros2-zenoh-federation
@@ -7,6 +12,7 @@ PLATFORM       ?= linux/amd64,linux/arm64
 AUTHFILE       ?= $(HOME)/.config/containers/auth.json
 
 .PHONY: all build push deploy undeploy test demo logs \
+        build-router build-bridge build-ubi push-router push-bridge push-ubi \
         deploy-bridge undeploy-bridge test-bridge demo-bridge logs-bridge \
         mirror-bridge \
         test-filtering test-filtering-scenario \
@@ -52,11 +58,14 @@ logs:
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-talker   --prefix --tail=3 &
 	@kubectl logs -n $(NAMESPACE) -l app=ros2-listener --prefix -f
 
-## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/, substituting IMAGE:VERSION
+## Apply zenoh-bridge-ros2dds manifests to k8s/bridge/, substituting image tags
 deploy-bridge:
 	kubectl apply -f k8s/bridge/namespace.yaml
 	@for f in k8s/bridge/configmap-*.yaml k8s/bridge/service-*.yaml k8s/bridge/deployment-*.yaml; do \
-		sed 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' $$f | kubectl apply -f -; \
+		sed -e 's|$(IMAGE):latest|$(IMAGE):$(VERSION)|g' \
+		    -e 's|$(ROUTER_IMAGE):latest|$(ROUTER_IMAGE):$(ECLIPSE_TAG)|g' \
+		    -e 's|$(BRIDGE_IMAGE):latest|$(BRIDGE_IMAGE):$(ECLIPSE_TAG)|g' \
+		    $$f | kubectl apply -f -; \
 	done
 
 ## Remove the bridge namespace and all contained resources
@@ -102,7 +111,9 @@ test-federation-scenario:
 deploy-federation:
 	kubectl apply -f k8s/federation/namespace.yaml
 	@for f in k8s/federation/configmap-*.yaml k8s/federation/service-*.yaml k8s/federation/deployment-*.yaml; do \
-		kubectl apply -f $$f; \
+		sed -e 's|$(ROUTER_IMAGE):latest|$(ROUTER_IMAGE):$(ECLIPSE_TAG)|g' \
+		    -e 's|$(BRIDGE_IMAGE):latest|$(BRIDGE_IMAGE):$(ECLIPSE_TAG)|g' \
+		    $$f | kubectl apply -f -; \
 	done
 
 ## Remove the federation namespace and all contained resources
@@ -117,25 +128,62 @@ test-federation-ocp:
 test-federation-ocp-scenario:
 	NAMESPACE=$(FEDERATION_NS) SCENARIO=$(N) bash scripts/test-federation-ocp.sh
 
-## Mirror upstream Zenoh images to Quay.io (requires QUAY_USERNAME / QUAY_PASSWORD env vars)
-## eclipse/zenoh:latest is also used by the local filtering tests (Scenario 8 router ACL).
+## Build UBI-based zenoh router image (multi-stage: binary extracted from eclipse/zenoh)
+build-router:
+	podman manifest rm $(ROUTER_IMAGE):$(VERSION) 2>/dev/null || true
+	podman rmi $(ROUTER_IMAGE):$(VERSION) 2>/dev/null || true
+	podman build --platform $(PLATFORM) \
+		--build-arg ECLIPSE_TAG=$(ECLIPSE_TAG) \
+		--manifest $(ROUTER_IMAGE):$(VERSION) \
+		-f Dockerfile.zenoh-router .
+
+## Build UBI-based zenoh-bridge-ros2dds image (multi-stage: binary extracted from eclipse/zenoh-bridge-ros2dds)
+build-bridge:
+	podman manifest rm $(BRIDGE_IMAGE):$(VERSION) 2>/dev/null || true
+	podman rmi $(BRIDGE_IMAGE):$(VERSION) 2>/dev/null || true
+	podman build --platform $(PLATFORM) \
+		--build-arg ECLIPSE_TAG=$(ECLIPSE_TAG) \
+		--manifest $(BRIDGE_IMAGE):$(VERSION) \
+		-f Dockerfile.zenoh-bridge .
+
+## Build both UBI-based Zenoh images
+build-ubi: build-router build-bridge
+
+## Push zenoh-router UBI image to Quay.io
+push-router:
+	podman manifest push --authfile $(AUTHFILE) $(ROUTER_IMAGE):$(VERSION)
+
+## Push zenoh-bridge-ros2dds UBI image to Quay.io
+push-bridge:
+	podman manifest push --authfile $(AUTHFILE) $(BRIDGE_IMAGE):$(VERSION)
+
+## Build and push both UBI-based Zenoh images to Quay.io
+push-ubi: push-router push-bridge
+
+## Mirror upstream Zenoh images to Quay.io verbatim (legacy fallback; prefer build-ubi).
+## Copies the upstream Alpine-based binaries without a UBI layer — use only if build-ubi is unavailable.
 mirror-bridge:
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
 		docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
-		docker://quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+		docker://quay.io/$(QUAY_ORG)/zenoh-bridge-ros2dds:latest
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
 		docker://docker.io/eclipse/zenoh:latest \
-		docker://quay.io/jianrzha/zenoh-router:latest
+		docker://quay.io/$(QUAY_ORG)/zenoh-router:latest
 
 ## Show this help
 help:
-	@grep -E '^## ' Makefile | sed 's/## /  /'
+	@awk '/^## /{if(h=="")h=substr($$0,4);next} /^[a-zA-Z][a-zA-Z0-9_-]+:/{if(h!="")printf "  %-30s %s\n",substr($$1,1,length($$1)-1),h;h="";next}{h=""}' Makefile
 	@echo ""
 	@echo "Variables (override with make VAR=value):"
+	@echo "  QUAY_ORG=$(QUAY_ORG)"
+	@echo "  DEMO_ORG=$(DEMO_ORG)"
 	@echo "  IMAGE=$(IMAGE)"
+	@echo "  ROUTER_IMAGE=$(ROUTER_IMAGE)"
+	@echo "  BRIDGE_IMAGE=$(BRIDGE_IMAGE)"
 	@echo "  VERSION=$(VERSION)"
+	@echo "  ECLIPSE_TAG=$(ECLIPSE_TAG)"
 	@echo "  NAMESPACE=$(NAMESPACE)"
 	@echo "  BRIDGE_NS=$(BRIDGE_NS)"
 	@echo "  PLATFORM=$(PLATFORM)"

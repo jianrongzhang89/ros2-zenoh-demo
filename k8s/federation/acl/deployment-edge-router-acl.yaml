@@ -17,7 +17,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: zenoh-router
-          image: docker.io/eclipse/zenoh:latest
+          image: quay.io/ecosystem-appeng/zenoh-router:latest
+          imagePullPolicy: Always
           # Scenario F2: ACL denies sensor/** egress across the federation link.
           args: ["-c", "/etc/zenoh/router-edge-acl.json5"]
           ports:

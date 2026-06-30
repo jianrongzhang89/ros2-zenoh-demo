@@ -66,8 +66,8 @@ spec:
 
         - name: zenoh-bridge
           # Bridges localhost DDS traffic to the central Zenoh router via TCP.
-          # Mirror: quay.io/jianrzha/zenoh-bridge-ros2dds:latest (populated by CI)
-          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
+          imagePullPolicy: Always
           args: ["-c", "/etc/zenoh/bridge.json5"]
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE

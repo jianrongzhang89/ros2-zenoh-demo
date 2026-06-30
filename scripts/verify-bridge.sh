@@ -34,7 +34,7 @@ echo "── Bridge Sidecar Connectivity ─────────────
 for app in ros2-dds-talker ros2-dds-listener; do
     bridge_log=$(kubectl logs -n "$NAMESPACE" -l "app=$app" -c zenoh-bridge \
         --tail=30 2>/dev/null || true)
-    if echo "$bridge_log" | grep -qiE "Opening session|Joining Zenoh|Connected|router"; then
+    if echo "$bridge_log" | grep -qiE "Remote bridge|Route (Subscriber|Publisher|Service)|zenoh_plugin_ros2dds"; then
         pass "$app / zenoh-bridge  connected to router"
     else
         fail "$app / zenoh-bridge  no connection evidence in last 30 log lines"

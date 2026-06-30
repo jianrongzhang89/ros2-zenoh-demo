@@ -63,7 +63,8 @@ spec:
               memory: 256Mi
 
         - name: zenoh-bridge
-          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
+          imagePullPolicy: Always
           args: ["-c", "/etc/zenoh/bridge.json5"]
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE

@@ -17,7 +17,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: zenoh-router
-          image: docker.io/eclipse/zenoh:latest
+          image: quay.io/ecosystem-appeng/zenoh-router:latest
+          imagePullPolicy: Always
           args: ["-c", "/etc/zenoh/router-cloud.json5"]
           ports:
             - containerPort: 7447
