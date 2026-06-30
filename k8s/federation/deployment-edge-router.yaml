@@ -17,7 +17,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: zenoh-router
-          image: quay.io/jianrzha/zenoh-router:latest
+          image: quay.io/ecosystem-appeng/zenoh-router:latest
           imagePullPolicy: Always
           # Scenario F1/F3: no ACL — all topics cross the federation link.
           # For Scenario F2, apply acl/deployment-edge-router-acl.yaml instead.

@@ -19,7 +19,7 @@ spec:
         - name: zenoh-router
           # Pure Zenoh routing daemon — no DDS bridge; just routes Zenoh sessions
           # from the bridge sidecars across pod boundaries via TCP.
-          image: quay.io/jianrzha/zenoh-router:latest
+          image: quay.io/ecosystem-appeng/zenoh-router:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 7447

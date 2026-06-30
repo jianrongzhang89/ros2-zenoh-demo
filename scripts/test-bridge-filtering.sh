@@ -5,8 +5,8 @@
 # Prerequisites:
 #   - podman machine running  (Mac: podman machine start)
 #   - podman-compose >= 1.0.6 (brew install podman-compose)
-#   - Images pulled or built:  quay.io/jianrzha/zenoh-router,
-#                              quay.io/jianrzha/zenoh-bridge-ros2dds,
+#   - Images pulled or built:  quay.io/ecosystem-appeng/zenoh-router,
+#                              quay.io/ecosystem-appeng/zenoh-bridge-ros2dds,
 #                              quay.io/jianrzha/ros2-zenoh-demo (or built locally)
 #
 # Usage:
@@ -291,8 +291,8 @@ main() {
 
   echo ""
   echo "=== Zenoh Bridge Filtering Tests ==="
-  echo "    Bridge image  : quay.io/jianrzha/zenoh-bridge-ros2dds:latest"
-  echo "    Router image  : quay.io/jianrzha/zenoh-router:latest"
+  echo "    Bridge image  : quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest"
+  echo "    Router image  : quay.io/ecosystem-appeng/zenoh-router:latest"
   echo "    Flow timeout  : ${FLOW_TIMEOUT}s (topics expected to arrive)"
   echo "    Block timeout : ${BLOCK_TIMEOUT}s (topics expected to be blocked)"
   echo "    Count window  : ${COUNT_WINDOW}s (rate-limit test)"

@@ -1,6 +1,8 @@
-IMAGE          ?= quay.io/jianrzha/ros2-zenoh-demo
-ROUTER_IMAGE   ?= quay.io/jianrzha/zenoh-router
-BRIDGE_IMAGE   ?= quay.io/jianrzha/zenoh-bridge-ros2dds
+QUAY_ORG       ?= ecosystem-appeng
+DEMO_ORG       ?= jianrzha
+IMAGE          ?= quay.io/$(DEMO_ORG)/ros2-zenoh-demo
+ROUTER_IMAGE   ?= quay.io/$(QUAY_ORG)/zenoh-router
+BRIDGE_IMAGE   ?= quay.io/$(QUAY_ORG)/zenoh-bridge-ros2dds
 VERSION        ?= 0.0.1
 ECLIPSE_TAG    ?= 1.9.0
 NAMESPACE      ?= ros2-zenoh
@@ -164,17 +166,19 @@ mirror-bridge:
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
 		docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
-		docker://quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+		docker://quay.io/$(QUAY_ORG)/zenoh-bridge-ros2dds:latest
 	skopeo copy --multi-arch all \
 		--dest-creds "$(QUAY_USERNAME):$(QUAY_PASSWORD)" \
 		docker://docker.io/eclipse/zenoh:latest \
-		docker://quay.io/jianrzha/zenoh-router:latest
+		docker://quay.io/$(QUAY_ORG)/zenoh-router:latest
 
 ## Show this help
 help:
 	@awk '/^## /{if(h=="")h=substr($$0,4);next} /^[a-zA-Z][a-zA-Z0-9_-]+:/{if(h!="")printf "  %-30s %s\n",substr($$1,1,length($$1)-1),h;h="";next}{h=""}' Makefile
 	@echo ""
 	@echo "Variables (override with make VAR=value):"
+	@echo "  QUAY_ORG=$(QUAY_ORG)"
+	@echo "  DEMO_ORG=$(DEMO_ORG)"
 	@echo "  IMAGE=$(IMAGE)"
 	@echo "  ROUTER_IMAGE=$(ROUTER_IMAGE)"
 	@echo "  BRIDGE_IMAGE=$(BRIDGE_IMAGE)"

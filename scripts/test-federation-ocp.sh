@@ -7,8 +7,8 @@
 #   - kubectl (or oc) configured and pointing at the target cluster
 #   - Namespace ros2-zenoh-federation created (or set NAMESPACE env var)
 #   - Images accessible from the cluster:
-#       quay.io/jianrzha/zenoh-router:latest
-#       quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+#       quay.io/ecosystem-appeng/zenoh-router:latest
+#       quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
 #       quay.io/jianrzha/ros2-zenoh-demo:latest
 #
 # Usage:

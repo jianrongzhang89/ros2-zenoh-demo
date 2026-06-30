@@ -6,7 +6,7 @@ services:
   # router-to-router federation link from edge-router.  Both use port 7447.
   # Port 8001 exposes the REST API to the host for admin space inspection (F3).
   cloud-router:
-    image: quay.io/jianrzha/zenoh-router:latest
+    image: quay.io/ecosystem-appeng/zenoh-router:latest
     platform: linux/arm64
     command: ["-c", "/etc/zenoh/router.json5"]
     ports:
@@ -41,7 +41,7 @@ services:
   # Shares ros2-listener's network namespace (cloud-net) and connects to
   # cloud-router:7447.  Delivers inbound Zenoh messages to local DDS subscribers.
   zenoh-bridge-listener:
-    image: quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+    image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
     platform: linux/arm64
     network_mode: "service:ros2-listener"
     command: ["-c", "/etc/zenoh/bridge.json5"]
@@ -60,7 +60,7 @@ services:
   # EDGE_ROUTER_CONFIG can be swapped between router-edge.json5 (no ACL, F1/F3)
   # and router-edge-acl.json5 (sensor/** blocked, F2).
   edge-router:
-    image: quay.io/jianrzha/zenoh-router:latest
+    image: quay.io/ecosystem-appeng/zenoh-router:latest
     platform: linux/arm64
     command: ["-c", "/etc/zenoh/router.json5"]
     ports:
@@ -101,7 +101,7 @@ services:
   # Connects to edge-router:7448 — it cannot reach cloud-router directly (cloud-net
   # is isolated).  All cross-tier routing goes through the federation link.
   zenoh-bridge-talker:
-    image: quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+    image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
     platform: linux/arm64
     network_mode: "service:ros2-talker"
     command: ["-c", "/etc/zenoh/bridge.json5"]

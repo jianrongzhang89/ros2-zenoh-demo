@@ -5,8 +5,8 @@
 # Prerequisites:
 #   - podman machine running  (Mac: podman machine start)
 #   - podman-compose >= 1.0.6 (brew install podman-compose)
-#   - Images pulled: quay.io/jianrzha/zenoh-router,
-#                    quay.io/jianrzha/zenoh-bridge-ros2dds,
+#   - Images pulled: quay.io/ecosystem-appeng/zenoh-router,
+#                    quay.io/ecosystem-appeng/zenoh-bridge-ros2dds,
 #                    quay.io/jianrzha/ros2-zenoh-demo (or set DEMO_IMAGE/DEMO_VERSION)
 #
 # Usage:
@@ -249,9 +249,9 @@ main() {
 
   echo ""
   echo "=== Zenoh Router Federation Tests ==="
-  echo "    Edge router image  : quay.io/jianrzha/zenoh-router:latest"
-  echo "    Cloud router image : quay.io/jianrzha/zenoh-router:latest"
-  echo "    Bridge image       : quay.io/jianrzha/zenoh-bridge-ros2dds:latest"
+  echo "    Edge router image  : quay.io/ecosystem-appeng/zenoh-router:latest"
+  echo "    Cloud router image : quay.io/ecosystem-appeng/zenoh-router:latest"
+  echo "    Bridge image       : quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest"
   echo "    Flow timeout       : ${FLOW_TIMEOUT}s"
   echo "    Block timeout      : ${BLOCK_TIMEOUT}s"
   echo "    Federation settle  : ${FEDERATION_SETTLE}s (router link establishment)"

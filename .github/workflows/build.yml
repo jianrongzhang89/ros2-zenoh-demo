@@ -7,7 +7,10 @@ on:
     branches: [main]
 
 env:
-  IMAGE: quay.io/jianrzha/ros2-zenoh-demo
+  IMAGE:        quay.io/jianrzha/ros2-zenoh-demo
+  ROUTER_IMAGE: quay.io/ecosystem-appeng/zenoh-router
+  BRIDGE_IMAGE: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds
+  ECLIPSE_TAG:  "1.9.0"
 
 jobs:
   build:
@@ -30,7 +33,7 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build (PR — no push)
+      - name: Build ros2-zenoh-demo (PR — no push)
         if: github.event_name == 'pull_request'
         uses: docker/build-push-action@v6
         with:
@@ -39,7 +42,7 @@ jobs:
           platforms: linux/arm64,linux/amd64
           push: false
 
-      - name: Build and push (main branch)
+      - name: Build and push ros2-zenoh-demo
         if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
@@ -53,14 +56,28 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE }}:latest
           cache-to: type=inline
 
-      - name: Mirror zenoh images to Quay.io
+      - name: Build and push zenoh-router (UBI)
         if: github.event_name == 'push'
-        run: |
-          skopeo copy --multi-arch all \
-            --dest-creds "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_PASSWORD }}" \
-            docker://docker.io/eclipse/zenoh-bridge-ros2dds:latest \
-            docker://quay.io/jianrzha/zenoh-bridge-ros2dds:latest
-          skopeo copy --multi-arch all \
-            --dest-creds "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_PASSWORD }}" \
-            docker://docker.io/eclipse/zenoh:latest \
-            docker://quay.io/jianrzha/zenoh-router:latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.zenoh-router
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: ECLIPSE_TAG=${{ env.ECLIPSE_TAG }}
+          tags: |
+            ${{ env.ROUTER_IMAGE }}:latest
+            ${{ env.ROUTER_IMAGE }}:${{ env.ECLIPSE_TAG }}
+
+      - name: Build and push zenoh-bridge-ros2dds (UBI)
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.zenoh-bridge
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: ECLIPSE_TAG=${{ env.ECLIPSE_TAG }}
+          tags: |
+            ${{ env.BRIDGE_IMAGE }}:latest
+            ${{ env.BRIDGE_IMAGE }}:${{ env.ECLIPSE_TAG }}
