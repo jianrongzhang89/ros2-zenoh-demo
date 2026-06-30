@@ -5,7 +5,7 @@ services:
   # Port 7447: Zenoh session endpoint for bridge clients.
   # Port 8000: REST API for key-space inspection (used in Scenario 6 scope test).
   zenoh-router:
-    image: docker.io/eclipse/zenoh:latest
+    image: quay.io/jianrzha/zenoh-router:latest
     platform: linux/arm64
     command: ["-c", "/etc/zenoh/router.json5"]
     ports:
@@ -48,7 +48,7 @@ services:
   # Mounts BRIDGE_CONFIG from the host; swapping it and restarting this container
   # is all that's needed to change scenarios.
   zenoh-bridge-talker:
-    image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+    image: quay.io/jianrzha/zenoh-bridge-ros2dds:latest
     platform: linux/arm64
     network_mode: "service:ros2-talker"
     command: ["-c", "/etc/zenoh/bridge.json5"]
@@ -83,7 +83,7 @@ services:
   # Shares ros2-listener's network namespace so it sees DDS subscribers on lo
   # and delivers inbound Zenoh messages back to DDS.
   zenoh-bridge-listener:
-    image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+    image: quay.io/jianrzha/zenoh-bridge-ros2dds:latest
     platform: linux/arm64
     network_mode: "service:ros2-listener"
     command: ["-c", "/etc/zenoh/bridge.json5"]

@@ -1,0 +1,41 @@
+# Download the glibc-linked (linux-gnu) zenoh-bridge-ros2dds from GitHub releases.
+# The *-standalone.zip bundles the bridge binary with no external runtime deps
+# beyond standard glibc — compatible with UBI9. DDS support is built in.
+#
+# TARGETARCH is set automatically by podman/buildah --platform (values: amd64, arm64).
+# It is mapped to the Rust target triple used in the GitHub release filename.
+ARG ECLIPSE_TAG=1.9.0
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal
+
+ARG ECLIPSE_TAG
+ARG TARGETARCH=amd64
+
+# shadow-utils is only needed for useradd; unzip for extracting the release zip.
+# Both are removed after use to keep the image minimal.
+RUN microdnf install -y shadow-utils unzip && \
+    useradd -m -u 1001 -g 0 -s /bin/bash zenoh && \
+    chmod -R g=u /home/zenoh && \
+    case "${TARGETARCH}" in \
+      amd64) RUST_TARGET="x86_64-unknown-linux-gnu"  ;; \
+      arm64) RUST_TARGET="aarch64-unknown-linux-gnu" ;; \
+      *)     echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    curl -fsSL \
+      "https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/releases/download/${ECLIPSE_TAG}/zenoh-plugin-ros2dds-${ECLIPSE_TAG}-${RUST_TARGET}-standalone.zip" \
+      -o /tmp/bridge.zip && \
+    mkdir -p /opt/zenoh-bridge && \
+    unzip /tmp/bridge.zip zenoh-bridge-ros2dds -d /opt/zenoh-bridge/ && \
+    chmod +x /opt/zenoh-bridge/zenoh-bridge-ros2dds && \
+    rm /tmp/bridge.zip && \
+    microdnf remove -y shadow-utils unzip && \
+    microdnf clean all
+
+ENV HOME=/home/zenoh
+
+# Non-root UID 1001 with GID 0 satisfies OpenShift restricted-v2 SCC:
+# runAsNonRoot=true passes, and GID 0 ensures file access under arbitrary UIDs.
+USER 1001
+
+EXPOSE 7447
+ENTRYPOINT ["/opt/zenoh-bridge/zenoh-bridge-ros2dds"]

@@ -17,9 +17,8 @@ spec:
         runAsNonRoot: true
       initContainers:
         - name: wait-for-edge-router
-          # Use the zenoh image (Alpine-based, confirmed amd64 on this cluster).
-          # Alpine busybox provides nc for a lightweight TCP readiness check.
-          image: docker.io/eclipse/zenoh:latest
+          # UBI-based zenoh-router image includes nmap-ncat for 'nc -z' readiness checks.
+          image: quay.io/jianrzha/zenoh-router:latest
           command:
             - sh
             - -c
@@ -64,7 +63,8 @@ spec:
               memory: 256Mi
 
         - name: zenoh-bridge
-          image: docker.io/eclipse/zenoh-bridge-ros2dds:latest
+          image: quay.io/jianrzha/zenoh-bridge-ros2dds:latest
+          imagePullPolicy: Always
           args: ["-c", "/etc/zenoh/bridge.json5"]
           env:
             - name: ROS_AUTOMATIC_DISCOVERY_RANGE
