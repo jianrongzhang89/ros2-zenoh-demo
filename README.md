@@ -46,17 +46,17 @@ ROS 2 nodes use the default DDS RMW (`rmw_fastrtps_cpp`) with `ROS_AUTOMATIC_DIS
              └──────────┬─────────────────────────┘
                         ▼
               Pod: zenoh-bridge-router
-              ┌──────────────────────┐
-              │  eclipse/zenoh       │
-              │  (plain Zenoh router)│
-              └──────────────────────┘
+              ┌──────────────────────────────────────┐
+              │  ecosystem-appeng/zenoh-router (UBI) │
+              │  (plain Zenoh routing daemon)         │
+              └──────────────────────────────────────┘
 ```
 
 | Component | Image | Role |
 |-----------|-------|------|
-| `zenoh-bridge-router` | `eclipse/zenoh` | Plain Zenoh routing daemon; no DDS |
-| `ros2-dds-talker` (2-container pod) | `ros2-zenoh-demo` + `eclipse/zenoh-bridge-ros2dds` | Talker node (DDS) + bridge sidecar |
-| `ros2-dds-listener` (2-container pod) | `ros2-zenoh-demo` + `eclipse/zenoh-bridge-ros2dds` | Listener node (DDS) + bridge sidecar |
+| `zenoh-bridge-router` | `quay.io/ecosystem-appeng/zenoh-router` | Plain Zenoh routing daemon; no DDS |
+| `ros2-dds-talker` (2-container pod) | `ros2-zenoh-demo` + `ecosystem-appeng/zenoh-bridge-ros2dds` | Talker node (DDS) + bridge sidecar |
+| `ros2-dds-listener` (2-container pod) | `ros2-zenoh-demo` + `ecosystem-appeng/zenoh-bridge-ros2dds` | Listener node (DDS) + bridge sidecar |
 
 The bridge sidecar reads `bridge.json5` from the `bridge-zenoh-config` ConfigMap, runs in Zenoh `client` mode, and connects to `zenoh-bridge-router:7447`.
 
@@ -232,25 +232,42 @@ k8s/bridge/
 └── deployment-ros2-dds-listener.yaml # 2-container pod: ros2-listener + zenoh-bridge
 ```
 
-### Mirror Images (first time or airgapped clusters)
+### Pre-built UBI Images
 
-The bridge uses two upstream Docker Hub images. Mirror them to Quay.io before deploying to clusters with restricted egress:
+The router and bridge are published to the team's Quay.io org as UBI9-based images. **Developers can use them directly without building anything.**
+
+| Image | Tag | Description |
+|-------|-----|-------------|
+| `quay.io/ecosystem-appeng/zenoh-router` | `1.9.0` / `latest` | Zenoh routing daemon (`zenohd`) + REST and storage plugins |
+| `quay.io/ecosystem-appeng/zenoh-bridge-ros2dds` | `1.9.0` / `latest` | DDS↔Zenoh bridge (`zenoh-bridge-ros2dds`) |
+
+Both images are:
+- Based on **`ubi9/ubi-minimal`** — compatible with OpenShift `restricted-v2` SCC out of the box
+- Built from the official [eclipse-zenoh GitHub releases](https://github.com/eclipse-zenoh/zenoh/releases) (`linux-gnu-standalone` variant, glibc-linked)
+- Run as **UID 1001 / GID 0** — no `runAsUser` override needed; works with OCP's arbitrary UID assignment
+- Multi-arch: `linux/amd64` and `linux/arm64`
+
+CI rebuilds and republishes both images on every push to `main` or `zeno-dds-bridge`.
+
+#### Rebuilding the images
+
+Only needed if you want to publish to a different org or bump the upstream version:
 
 ```bash
-export QUAY_USERNAME=<your-username>
-export QUAY_PASSWORD=<your-password>
-make mirror-bridge
-```
+# Build and push for amd64 only (matches typical OCP clusters)
+make build-ubi push-ubi VERSION=1.9.0 ECLIPSE_TAG=1.9.0 PLATFORM=linux/amd64
 
-This copies `eclipse/zenoh-bridge-ros2dds:latest` and `eclipse/zenoh:latest` to `quay.io/jianrzha/`. CI runs this automatically on every push to `main` or `zeno-dds-bridge`.
+# Override the target org (defaults to ecosystem-appeng)
+make build-ubi push-ubi QUAY_ORG=my-org VERSION=1.9.0 ECLIPSE_TAG=1.9.0
+```
 
 ### Deploy
 
 ```bash
-make deploy-bridge VERSION=0.0.2
+make deploy-bridge VERSION=0.0.7 ECLIPSE_TAG=1.9.0
 ```
 
-Applies all manifests under `k8s/bridge/`, substituting `IMAGE:latest` → `IMAGE:VERSION` for the `ros2-zenoh-demo` image. The sidecar and router images (`eclipse/zenoh-bridge-ros2dds`, `eclipse/zenoh`) are pinned to `:latest` in the manifests and are not substituted.
+Applies all manifests under `k8s/bridge/`. The `ros2-zenoh-demo` image tag is substituted from `VERSION`; the router and bridge image tags are substituted from `ECLIPSE_TAG`. Static manifests carry `:latest` as a placeholder.
 
 ### Verify
 
@@ -331,8 +348,13 @@ make undeploy-bridge
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VERSION` | `0.0.1` | Image tag to build, push, and deploy |
-| `IMAGE` | `quay.io/jianrzha/ros2-zenoh-demo` | Image repository |
+| `QUAY_ORG` | `ecosystem-appeng` | Quay.io org for the router and bridge images |
+| `DEMO_ORG` | `jianrzha` | Quay.io org for the `ros2-zenoh-demo` image |
+| `VERSION` | `0.0.1` | Tag for the `ros2-zenoh-demo` build/deploy |
+| `ECLIPSE_TAG` | `1.9.0` | Upstream zenoh release version to build and deploy |
+| `IMAGE` | `quay.io/$(DEMO_ORG)/ros2-zenoh-demo` | Full demo image ref (derived) |
+| `ROUTER_IMAGE` | `quay.io/$(QUAY_ORG)/zenoh-router` | Full router image ref (derived) |
+| `BRIDGE_IMAGE` | `quay.io/$(QUAY_ORG)/zenoh-bridge-ros2dds` | Full bridge image ref (derived) |
 | `NAMESPACE` | `ros2-zenoh` | Namespace for Approach 1 |
 | `BRIDGE_NS` | `ros2-zenoh-bridge` | Namespace for Approach 2 |
 | `PLATFORM` | `linux/amd64,linux/arm64` | Build platforms (multi-arch) |
@@ -341,19 +363,25 @@ make undeploy-bridge
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Build multi-arch image and tag it `IMAGE:VERSION` |
-| `make push` | Push the image to Quay.io |
+| `make build` | Build multi-arch `ros2-zenoh-demo` image |
+| `make push` | Push `ros2-zenoh-demo` to Quay.io |
+| `make build-router` | Build UBI-based `zenoh-router` image from GitHub release |
+| `make build-bridge` | Build UBI-based `zenoh-bridge-ros2dds` image from GitHub release |
+| `make build-ubi` | Build both UBI images |
+| `make push-router` | Push `zenoh-router` manifest to Quay.io |
+| `make push-bridge` | Push `zenoh-bridge-ros2dds` manifest to Quay.io |
+| `make push-ubi` | Push both UBI images to Quay.io |
 | `make deploy` | Apply Approach 1 manifests (`k8s/`), injecting `VERSION` |
 | `make test` | Wait for rollout then run `scripts/verify.sh` |
 | `make demo` | Live-stream all three Approach 1 pods |
 | `make logs` | Stream raw logs from Approach 1 pods |
 | `make undeploy` | Delete the `ros2-zenoh` namespace |
-| `make deploy-bridge` | Apply Approach 2 manifests (`k8s/bridge/`), injecting `VERSION` |
+| `make deploy-bridge` | Apply Approach 2 manifests, injecting `VERSION` and `ECLIPSE_TAG` |
 | `make test-bridge` | Wait for rollout then run `scripts/verify-bridge.sh` |
 | `make demo-bridge` | Live-stream the Approach 2 message pipeline |
 | `make logs-bridge` | Stream raw logs from all Approach 2 containers |
 | `make undeploy-bridge` | Delete the `ros2-zenoh-bridge` namespace |
-| `make mirror-bridge` | Copy `eclipse/zenoh-bridge-ros2dds` and `eclipse/zenoh` to Quay.io |
+| `make mirror-bridge` | Legacy: copy upstream Eclipse images verbatim to Quay.io |
 
 ---
 
@@ -361,7 +389,15 @@ make undeploy-bridge
 
 ### `Dockerfile.ros2`
 
-Single image used by all ROS 2 node containers (both approaches). Installs `rmw_zenoh_cpp` and `demo_nodes_cpp` on top of `ros:jazzy-ros-base`. Creates a non-root user with `GID 0` for OpenShift compatibility.
+Single image used by all ROS 2 node containers (both approaches). Installs `rmw_zenoh_cpp` and `demo_nodes_cpp` on top of UBI9 with the ROS 2 Jazzy RHEL9 repo. Creates a non-root user with `GID 0` for OpenShift compatibility.
+
+### `Dockerfile.zenoh-router`
+
+Builds `quay.io/ecosystem-appeng/zenoh-router`. Downloads the `linux-gnu-standalone` release zip for the target arch from the [eclipse-zenoh/zenoh](https://github.com/eclipse-zenoh/zenoh/releases) GitHub releases, extracts `zenohd` plus the REST and storage-manager plugins into `/opt/zenoh/`, and layers them on `ubi9/ubi-minimal`. Runs as UID 1001/GID 0. The `ECLIPSE_TAG` build arg sets the upstream version.
+
+### `Dockerfile.zenoh-bridge`
+
+Builds `quay.io/ecosystem-appeng/zenoh-bridge-ros2dds`. Same pattern as `Dockerfile.zenoh-router` but downloads from [eclipse-zenoh/zenoh-plugin-ros2dds](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/releases) and extracts `zenoh-bridge-ros2dds` into `/opt/zenoh-bridge/`.
 
 ### `zenoh-client.json5`
 
@@ -410,7 +446,12 @@ Approach 2 live stream: tails the talker node, listener node, and router with la
 
 ### `.github/workflows/build.yml`
 
-CI pipeline: builds and pushes the `ros2-zenoh-demo` image for `linux/amd64` and `linux/arm64`, then mirrors `eclipse/zenoh-bridge-ros2dds` and `eclipse/zenoh` to Quay.io. Runs on push to `main` or `zeno-dds-bridge`.
+CI pipeline triggered on push to `main` or `zeno-dds-bridge`. Builds and pushes three images for `linux/amd64` and `linux/arm64`:
+1. `quay.io/jianrzha/ros2-zenoh-demo` — from `Dockerfile.ros2`
+2. `quay.io/ecosystem-appeng/zenoh-router` — from `Dockerfile.zenoh-router`
+3. `quay.io/ecosystem-appeng/zenoh-bridge-ros2dds` — from `Dockerfile.zenoh-bridge`
+
+The zenoh version is controlled by the `ECLIPSE_TAG` env var in the workflow file.
 
 ---
 
@@ -430,8 +471,8 @@ OpenShift cluster nodes typically run on `x86_64`. An `arm64`-only image produce
 **Version injection happens at deploy time.**
 Static manifests keep `:latest` as a placeholder for the `ros2-zenoh-demo` image. `make deploy VERSION=x.y.z` and `make deploy-bridge VERSION=x.y.z` use `sed` to substitute the correct tag before `kubectl apply`.
 
-**Mirror upstream images before deploying to restricted clusters.**
-Clusters with `imagePullPolicy` restrictions or no Docker Hub egress need the `eclipse/zenoh` and `eclipse/zenoh-bridge-ros2dds` images pre-mirrored. Use `make mirror-bridge` or rely on the CI workflow.
+**Router and bridge images are served from Quay.io — no Docker Hub egress needed.**
+`quay.io/ecosystem-appeng/zenoh-router` and `quay.io/ecosystem-appeng/zenoh-bridge-ros2dds` are the team-standard images. They are UBI9-based and built from the official zenoh GitHub releases, so clusters with Docker Hub egress restrictions or Red Hat image scanning requirements are fully supported without any mirroring step.
 
 ---
 
@@ -450,8 +491,8 @@ the full explanation, diagnostic steps, and the reference ConfigMap at
 **`ZENOH_SESSION_CONFIG_URI`, not `ZENOH_CONFIG`.**
 `rmw_zenoh_cpp` reads its own env var. `ZENOH_CONFIG` is silently ignored; the library falls back to its bundled default which hardcodes `tcp/localhost:7447`.
 
-**Use `rmw_zenohd` as the router for Approach 1, not `eclipse/zenoh`.**
-The standalone `eclipse/zenoh` image is a generic Zenoh router and is incompatible with ROS 2 graph management. Approach 1's router must be started with `ros2 run rmw_zenoh_cpp rmw_zenohd`. Approach 2 uses `eclipse/zenoh` intentionally — the bridges speak plain Zenoh, not ROS 2 graph protocol.
+**Use `rmw_zenohd` as the router for Approach 1, not `zenoh-router`.**
+`quay.io/ecosystem-appeng/zenoh-router` (plain `zenohd`) is a generic Zenoh router and is incompatible with ROS 2 graph management. Approach 1's router must be started with `ros2 run rmw_zenoh_cpp rmw_zenohd`. Approach 2 uses `zenoh-router` intentionally — the bridge sidecars speak plain Zenoh, not the ROS 2 graph protocol.
 
 **Set `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` for Approach 2.**
 Without this, DDS multicast spans across pods and causes duplicate or split delivery. The bridge sidecars handle cross-pod forwarding; DDS must not attempt it independently.
