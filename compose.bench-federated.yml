@@ -1,0 +1,117 @@
+services:
+
+  # ── Cloud-tier router ────────────────────────────────────────────────────
+  cloud-router:
+    image: ${ROUTER_IMAGE:-quay.io/ecosystem-appeng/zenoh-router}:${ROUTER_TAG:-1.9.0}
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7447:7447/tcp"
+    volumes:
+      - ./tests/configs/router-cloud.json5:/etc/zenoh/router.json5:ro
+    networks:
+      - cloud-net
+      - wan-net
+
+  # ── Edge-tier router ─────────────────────────────────────────────────────
+  # Connects outbound to cloud-router:7447 via wan-net to form the federation link.
+  edge-router:
+    image: ${ROUTER_IMAGE:-quay.io/ecosystem-appeng/zenoh-router}:${ROUTER_TAG:-1.9.0}
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7448:7448/tcp"
+    volumes:
+      - ./tests/configs/router-edge.json5:/etc/zenoh/router.json5:ro
+    networks:
+      - edge-net
+      - wan-net
+    depends_on:
+      - cloud-router
+
+  # ── Publisher side (edge tier) ───────────────────────────────────────────
+  bench-pub:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        sleep ${PUB_SLEEP:-20} &&
+        exec python3 /tests/bench_pub.py
+          --rate ${RATE_HZ:-10}
+          --duration ${PUB_DURATION:-80}
+          --topic /bench
+      "
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - edge-net
+    depends_on:
+      - edge-router
+
+  # Bridge sidecar for the publisher: inherits edge-net via network_mode,
+  # connects to edge-router:7448 (bridge-edge.json5).
+  bridge-pub:
+    image: ${BRIDGE_IMAGE:-quay.io/ecosystem-appeng/zenoh-bridge-ros2dds}:${BRIDGE_TAG:-1.9.0}
+    platform: linux/arm64
+    network_mode: "service:bench-pub"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-edge.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - bench-pub
+
+  # ── Subscriber side (cloud tier) ─────────────────────────────────────────
+  bench-sub:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        sleep ${SUB_SLEEP:-35} &&
+        exec python3 /tests/bench_sub.py
+          --duration ${MEASURE_DURATION:-30}
+          --warmup ${WARMUP_SECS:-8}
+          --topic /bench
+      "
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - cloud-net
+    depends_on:
+      - cloud-router
+
+  # Bridge sidecar for the subscriber: inherits cloud-net via network_mode,
+  # connects to cloud-router:7447 (bridge-cloud.json5).
+  bridge-sub:
+    image: ${BRIDGE_IMAGE:-quay.io/ecosystem-appeng/zenoh-bridge-ros2dds}:${BRIDGE_TAG:-1.9.0}
+    platform: linux/arm64
+    network_mode: "service:bench-sub"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-cloud.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - bench-sub
+
+networks:
+  # Edge private network: bench-pub + edge-router (bridge-pub inherits via network_mode)
+  edge-net:
+    driver: bridge
+
+  # Cloud private network: bench-sub + cloud-router (bridge-sub inherits via network_mode)
+  cloud-net:
+    driver: bridge
+
+  # WAN: only the two routers may route to each other; bridges cannot cross tiers directly
+  wan-net:
+    driver: bridge
