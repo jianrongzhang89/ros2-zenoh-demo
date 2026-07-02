@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-router
+  namespace: ros2-zenoh-bench
+spec:
+  selector:
+    app: bench-router
+  ports:
+    - port: 7447
+      targetPort: 7447
+      protocol: TCP
