@@ -186,9 +186,11 @@ run_one() {
   min_ms=$(echo "$raw_stats"  | python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"{d['min_ms']:.2f}\")")
   gaps=$(echo "$raw_stats"    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['gaps'])")
 
-  local expected=$(( rate * MEASURE_DURATION ))
+  # n_expected = messages published during the measurement window only (after warmup).
+  local meas_window=$(( MEASURE_DURATION - warmup ))
+  local expected=$(( rate * meas_window ))
   local loss_pct
-  if [ "$expected" -gt 0 ] && [ "$n" -gt 0 ] 2>/dev/null; then
+  if [ "$expected" -gt 0 ] 2>/dev/null; then
     loss_pct=$(python3 -c "print(f\"{max(0, ($expected - $n) / $expected * 100):.1f}\")")
   else
     loss_pct="N/A"
