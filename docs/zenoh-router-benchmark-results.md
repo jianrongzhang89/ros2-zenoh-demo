@@ -1,156 +1,142 @@
 # Zenoh Router Benchmark Results: Single-Router vs. Federated Latency
 
-**Date:** 2026-07-01  
-**Platform:** linux/arm64 containerized (podman + libkrun on macOS Apple Silicon)  
+**Date:** 2026-07-02  
+**Platform:** linux/arm64 containerized (podman + libkrun, 6 GB VM, macOS Apple Silicon)  
 **Zenoh router:** 1.9.0 · **zenoh-bridge-ros2dds:** 1.9.0 · **ROS 2:** Jazzy  
 **Message type:** `std_msgs/msg/String` with embedded nanosecond wall-clock timestamp  
-**Infrastructure:** `compose.bench-single.yml` / `compose.bench-federated.yml`  
-**Scripts:** `tests/bench_pub.py` / `tests/bench_sub.py`
+**Measurement:** publisher `time.time_ns()` → subscriber `time.time_ns()` (shared host clock, no sync needed)  
+**Warmup:** 5 s (single), 8 s (federated) discarded before counting  
+**Measurement window:** 25 s (single), 22 s (federated) per rate  
 
 ---
 
 ## Topology
 
 ```
-Single-router:
+Single-router
   bench-pub → (DDS/lo) → bridge-pub → Zenoh → zenoh-router → Zenoh → bridge-sub → (DDS/lo) → bench-sub
 
-Federated (two routers):
+Federated (two router hops)
   bench-pub → (DDS/lo) → bridge-pub → Zenoh → edge-router ─(WAN)─ cloud-router → Zenoh → bridge-sub → (DDS/lo) → bench-sub
 ```
 
-All containers run on the same host inside isolated Docker networks. Latency is measured as `recv_ns − send_ns` using the shared host wall clock — no clock synchronization needed.
+All containers run on the same host inside isolated Docker networks.
 
 ---
 
-## Measurement Notes and Caveats
-
-### n=250 throughput ceiling
-
-Every rate produced exactly **n=250 messages** in the measurement window. This is not a coincidence: the compose file's YAML `>` block scalar combined with podman-compose 1.6.0 variable substitution did not propagate `RATE_HZ` into the container runtime, causing `bench_pub.py` to always run at its default 10 Hz. Similarly, `MEASURE_DURATION` defaulted to 30 s with a 5 s warmup window, yielding **10 Hz × 25 s = 250 messages** for every configured rate.
-
-Consequently:
-
-- **The "Rate (Hz)" column reflects the intended publish rate, not the actual rate.** Effective throughput was ~10 Hz throughout all runs.
-- **The "Loss %" column** is computed against `n_expected = rate × 20`, making it meaningless for rates above ~16 Hz. It does not indicate actual Zenoh message loss.
-- **The latency statistics (mean, p95, p99) are valid** — they measure actual end-to-end message transit time for the messages that did arrive.
-
-The compose files have been left as-is; fix for future runs: move rate/duration parameters into the `environment:` section of each service (where podman-compose substitution is reliable) rather than embedding them in `command:`.
-
-### Environment overhead
-
-The libkrun VM on macOS adds virtualization overhead not present on bare-metal Linux. Published benchmarks (arXiv:2303.09419) use native Linux with 64-byte payloads. Absolute latency values here will be higher; relative comparisons (single vs. federated) remain valid.
-
-### Sample size
-
-n=250 per data point. Statistically adequate for mean and p95 but insufficient for tails beyond p99. Results are reproducible across reruns (variance < 15%).
-
----
-
-## Results
+## Raw Results
 
 ### Single-Router Topology
 
-| Rate (Hz) | n recv | Effective Hz | Mean (ms) | p95 (ms) | p99 (ms) |
-|-----------|--------|--------------|-----------|----------|----------|
-| 1         | 250    | 10           | 3.01      | 4.63     | 5.79     |
-| 10        | 250    | 10           | 4.58      | 8.47     | 10.26    |
-| 50        | 250    | 10           | 4.73      | 8.34     | 12.79    |
-| 100       | 250    | 10           | 4.67      | 8.80     | 11.17    |
-| 200       | 250    | 10           | 4.63      | 9.02     | 11.12    |
-| **Average**| —     | —            | **4.32**  | **7.85** | **10.23**|
+| Rate (Hz) | Received | Expected | Loss % | Mean (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Gaps |
+|-----------|----------|----------|--------|-----------|----------|----------|----------|------|
+| 1         | 25       | 25       | 0.0    | 5.02      | —        | 7.75     | 8.45     | 0    |
+| 10        | 250      | 250      | 0.0    | 4.75      | —        | 7.45     | 12.77    | 0    |
+| 50        | 1 250    | 1 250    | 0.0    | 1.93      | —        | 2.57     | 3.18     | 0    |
+| 100       | 2 500    | 2 500    | 0.0    | 1.51      | —        | 1.93     | 2.60     | 0    |
+| 200       | 4 989    | 5 000    | 0.2    | 1.43      | —        | 2.03     | 3.33     | 0    |
 
-Single-router latency is stable across all configurations: **mean ~4 ms, p95 ~8 ms, p99 ~11 ms** at ~10 Hz effective load on a libkrun-virtualized ARM64 host.
+### Federated Topology (Two Hops: edge-router → cloud-router)
 
-### Federated Topology (Two Router Hops)
+| Rate (Hz) | Received | Expected | Loss % | Mean (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Gaps |
+|-----------|----------|----------|--------|-----------|----------|----------|----------|------|
+| 1         | 22       | 22       | 0.0    | 5.25      | —        | 8.50     | 8.99     | 0    |
+| 10        | 219      | 220      | 0.5    | 4.72      | —        | 8.57     | 13.11    | 0    |
+| 50        | 1 099    | 1 100    | 0.1    | 3.14      | —        | 4.82     | 5.61     | 0    |
+| 100       | 2 200    | 2 200    | 0.0    | 2.04      | —        | 3.95     | 4.75     | 0    |
+| 200       | 4 393    | 4 400    | 0.2    | 1.86      | —        | 3.32     | 6.89     | 0    |
 
-| Rate (Hz) | n recv | Effective Hz | Mean (ms) | p95 (ms) | p99 (ms) |
-|-----------|--------|--------------|-----------|----------|----------|
-| 1         | 250    | 10           | 4.97      | 9.19     | 12.98    |
-| 10        | 250    | 10           | 3.22      | 6.13     | 7.09     |
-| 50        | 250    | 10           | 5.00      | 9.04     | 11.89    |
-| 100       | 250    | 10           | 4.63      | 7.73     | 10.74    |
-| 200       | 250    | 10           | 3.56      | 6.11     | 7.95     |
-| **Average**| —     | —            | **4.28**  | **7.64** | **10.13**|
+---
 
-### Overhead: Federated vs. Single-Router
+## Federation Overhead
 
-| Rate (Hz) | Single mean (ms) | Federated mean (ms) | Ratio | Single p99 (ms) | Federated p99 (ms) | p99 Ratio |
-|-----------|-----------------|---------------------|-------|-----------------|---------------------|-----------|
-| 1         | 3.01            | 4.97                | **1.65x** | 5.79       | 12.98               | **2.24x** |
-| 10        | 4.58            | 3.22                | 0.70x | 10.26          | 7.09                | 0.69x     |
-| 50        | 4.73            | 5.00                | 1.06x | 12.79          | 11.89               | 0.93x     |
-| 100       | 4.67            | 4.63                | 0.99x | 11.17          | 10.74               | 0.96x     |
-| 200       | 4.63            | 3.56                | 0.77x | 11.12          | 7.95                | 0.71x     |
+| Rate (Hz) | Single mean | Fed. mean | Mean ratio | Single p95 | Fed. p95 | p95 ratio | Single p99 | Fed. p99 | p99 ratio |
+|-----------|------------|-----------|------------|------------|----------|-----------|------------|----------|-----------|
+| 1         | 5.02 ms    | 5.25 ms   | **1.05×**  | 7.75 ms    | 8.50 ms  | **1.10×** | 8.45 ms    | 8.99 ms  | **1.06×** |
+| 10        | 4.75 ms    | 4.72 ms   | **1.00×**  | 7.45 ms    | 8.57 ms  | **1.15×** | 12.77 ms   | 13.11 ms | **1.03×** |
+| 50        | 1.93 ms    | 3.14 ms   | **1.63×**  | 2.57 ms    | 4.82 ms  | **1.88×** | 3.18 ms    | 5.61 ms  | **1.76×** |
+| 100       | 1.51 ms    | 2.04 ms   | **1.35×**  | 1.93 ms    | 3.95 ms  | **2.05×** | 2.60 ms    | 4.75 ms  | **1.83×** |
+| 200       | 1.43 ms    | 1.86 ms   | **1.30×**  | 2.03 ms    | 3.32 ms  | **1.64×** | 3.33 ms    | 6.89 ms  | **2.07×** |
 
 ---
 
 ## Analysis
 
-### What the data confirms
+### Finding 1 — Latency drops sharply as message rate increases
 
-**At the lowest load (1 Hz), the federated topology adds a measurable overhead:**
-- Mean latency: +1.96 ms (+65%)
-- p99 latency: +7.19 ms (+124%)
+Both topologies show a clear inverse relationship between publish rate and latency:
 
-This is consistent with the expected cost of an additional router hop. Each hop requires a serialization, queue pass, and deserialization cycle within the Zenoh routing engine.
+| Topology | 1 Hz mean | 200 Hz mean | Improvement |
+|----------|-----------|-------------|-------------|
+| Single   | 5.02 ms   | 1.43 ms     | 3.5×        |
+| Federated | 5.25 ms  | 1.86 ms     | 2.8×        |
 
-**At higher effective rates, the overhead is within measurement noise.** Across 10–200 Hz configured rates (all running at ~10 Hz effective), the federated and single-router topologies produce latency within 1–2 ms of each other. The differences are not statistically significant with n=250 samples and ~5–10 ms natural variance from the libkrun VM.
+At low rates (1–10 Hz) each message must re-warm the DDS discovery state and Zenoh's internal routing pipeline. At higher rates (50–200 Hz) the bridge pipeline stays warm between messages, reducing per-message overhead. This is consistent with Zenoh's design for high-throughput scenarios and with published benchmarks (arXiv:2303.09419, arXiv:2603.21600).
 
-**No sequential message gaps were detected (`gaps=0`) at any rate.** Within the set of 250 messages that were received, no sequence numbers were skipped. This means the bridge delivers messages in order and does not internally reorder.
+**Implication:** ROS 2 topics that publish at 50 Hz or higher traverse the bridge stack far more efficiently than infrequent telemetry or status topics.
 
-### What the data does not confirm
+### Finding 2 — Federation overhead is rate-dependent
 
-**The throughput ceiling.** Every run hit n=250 due to the 10 Hz effective publish rate, not Zenoh's actual throughput limit. The bridge stack on this environment appears capable of passing 10 Hz (250 messages in 25 seconds) reliably; higher rates were not successfully tested.
+At **low rates (1–10 Hz)** the extra router hop is nearly invisible: mean latency is identical to within 0.5 ms. Both routers are idle between messages and the marginal cost of the extra hop is absorbed by the existing pipeline latency.
 
-**High-rate loss behavior.** Published benchmarks for ROS 2 Zenoh report throughputs in the hundreds of MB/s range (millions of messages/second). The bridge stack on this host is not a throughput bottleneck at 10 Hz; the n=250 ceiling is entirely a benchmark instrumentation issue, not a Zenoh limit.
+At **higher rates (50–200 Hz)** the federation overhead becomes significant:
 
-**Federated latency at true high rates.** Because effective rate was always 10 Hz, we have no data on how federation overhead behaves at 50–200 Hz. This gap should be addressed in a native Linux re-run.
+- **Mean latency:** 1.3–1.6× higher with federation
+- **p95 latency:** 1.6–2.1× higher with federation
+- **p99 latency:** 1.8–2.1× higher with federation
+
+The tail latency divergence is the key risk for real-time ROS 2 use cases. At 200 Hz, p99 with a single router is 3.33 ms but with federation it is 6.89 ms — more than double.
+
+### Finding 3 — Message loss is negligible across all rates and topologies
+
+Loss stays at 0.0–0.5% even at 200 Hz through the federation link. No sequence gaps were observed at any rate, meaning messages that do arrive are delivered in publisher order. The Zenoh hop-to-hop reliability layer handles transient queue pressure without reordering.
+
+**Caveat:** these tests run in a steady state with no router restarts. Loss behaviour during a router pod restart or rolling update is not captured here — the research document (`zenoh-router-scaling-research.md`, Issue #1886) addresses that separately.
+
+### Finding 4 — Federated p99 at 200 Hz warrants attention
+
+The federated p99 at 200 Hz is 6.89 ms versus 3.33 ms for a single router. For ROS 2 control loops running at 100–200 Hz (e.g. `/cmd_vel`, joint controllers), a p99 above 5 ms may violate loop-closure timing assumptions. This should be validated against the specific controller's deadline before committing to a federated topology for those topics.
 
 ---
 
-## Key Finding: Federation Overhead is Real but Bounded
+## Recommended Scaling Strategy
 
-The empirical data at 1 Hz (the only rate where effective load matched intent) shows:
-
-| Metric | Single Router | Federated | Overhead |
-|--------|--------------|-----------|----------|
-| Mean   | 3.01 ms      | 4.97 ms   | +1.96 ms (+65%) |
-| p95    | 4.63 ms      | 9.19 ms   | +4.56 ms (+99%) |
-| p99    | 5.79 ms      | 12.98 ms  | +7.19 ms (+124%) |
-
-The additional router hop roughly doubles p95/p99 latency. For ROS 2 topics where **tail latency matters** (e.g., navigation commands, emergency stops, real-time sensor fusion), this is significant. For **telemetry, status, and logging topics** at low rates, the absolute values (< 13 ms p99) are tolerable.
-
-This aligns with and provides quantitative support for the research conclusion in [`zenoh-router-scaling-research.md`](zenoh-router-scaling-research.md): federation is the correct HA topology, but each additional router hop adds measurable latency at the tail.
+| Scenario | Recommendation |
+|---|---|
+| Topics ≤ 10 Hz (status, telemetry, logging) | Federated topology safe — overhead is < 10% of mean latency |
+| Topics 50–200 Hz (sensors, odometry) | Test p99 against loop deadline; federation adds ~2× tail latency |
+| Topics with hard real-time deadlines (controllers) | Use single-router or keep publisher/subscriber on the same router node |
+| HA requirement across zones | Federation is the only supported model; use Advanced Pub/Sub for end-to-end reliability on critical topics |
+| Kubernetes scaling | StatefulSet per router with stable DNS; no HPA behind shared VIP (see `zenoh-router-scaling-research.md`) |
 
 ---
 
-## Recommendations from Benchmark Data
+## Environment Caveats
 
-1. **Use federation for HA — the latency cost is bounded.** An additional 2–7 ms mean/p99 overhead from a federation hop is acceptable for most ROS 2 topics given the reliability and scalability gains.
+1. **Containerized overhead.** These measurements include libkrun VM, Docker networking, and DDS-to-Zenoh bridge translation layers. Native Linux bare-metal latency will be significantly lower (published data: 21 µs brokered vs. 10 µs P2P at 64-byte payload on native Linux — arXiv:2303.09419). The **ratios** (single vs. federated) are the meaningful output; the **absolute values** are not production targets.
 
-2. **Enable Advanced Pub/Sub (end-to-end reliability) selectively for tail-sensitive topics.** For topics where p99 > 10 ms is unacceptable (e.g., `/cmd_vel`, `/emergency_stop`), the hop-to-hop default reliability is lossy during failover. Use end-to-end reliability on those topics only.
+2. **Same-host containers.** Publisher and subscriber share the host kernel clock — no NTP jitter — and communicate through loopback + virtual bridge interfaces. A real deployment crosses physical NICs and switches, adding RTT that dominates over the router-hop overhead measured here.
 
-3. **Re-run on native Linux before setting SLOs.** The libkrun VM adds ~2–4 ms overhead vs. bare metal. Absolute numbers here are not production targets; published data (arXiv:2303.09419) shows single-router latency of 21 µs at 64-byte payload on native Linux — roughly 200x lower than measured here.
-
-4. **Fix the benchmark variable substitution for rate-varying tests.** Move `RATE_HZ`, `MEASURE_DURATION`, `WARMUP_SECS`, `PUB_SLEEP`, `SUB_SLEEP` into the `environment:` section of each compose service to ensure reliable substitution by podman-compose. This will unlock the 50–200 Hz data points needed to characterize bridge throughput limits.
+3. **Steady-state only.** No router restarts, rolling updates, or failover events were tested. The reconnection race condition (Issue #1886) makes those scenarios lossy in ways not captured in these numbers.
 
 ---
 
 ## Reproduction
 
 ```bash
-# Start podman machine (macOS)
+# Ensure podman machine has at least 4 GB (6 GB recommended for federated)
+podman machine set --memory 6144
 podman machine start
 
-# Run full benchmark (all rates, both topologies)
-MEASURE_DURATION=20 bash scripts/benchmark.sh
+# Full benchmark (all rates, both topologies, 30s windows)
+MEASURE_DURATION=30 bash scripts/benchmark.sh
 
-# Run a single topology
-TOPOLOGY=single RATES="1 10 50" bash scripts/benchmark.sh
+# Single topology only
+TOPOLOGY=single RATES="1 10 50 100 200" bash scripts/benchmark.sh
 
-# Dry run to verify setup
+# Dry run
 DRY_RUN=1 bash scripts/benchmark.sh
 ```
 
-Raw data: [`docs/benchmark-results.csv`](benchmark-results.csv)
+Raw data: [`docs/benchmark-results.csv`](benchmark-results.csv)  
+Research context: [`docs/zenoh-router-scaling-research.md`](zenoh-router-scaling-research.md)
