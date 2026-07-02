@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bench-configs
+  namespace: ros2-zenoh-bench
+data:
+  # ── Single-router: central router config ──────────────────────────────────
+  router.json5: |
+    {
+      mode: "router",
+      listen: {
+        endpoints: ["tcp/0.0.0.0:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
+
+  # ── Single-router: bridge config (pub + sub both connect here) ───────────
+  bridge-single.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/bench-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
+
+  # ── Federated: publisher-side bridge (connects to edge-router:7448) ──────
+  bridge-edge.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/edge-router:7448"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }
+
+  # ── Federated: subscriber-side bridge (connects to cloud-router:7447) ────
+  bridge-cloud.json5: |
+    {
+      mode: "client",
+      connect: {
+        endpoints: ["tcp/cloud-router:7447"]
+      },
+      scouting: {
+        multicast: { enabled: false }
+      }
+    }

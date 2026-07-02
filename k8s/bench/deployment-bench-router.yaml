@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-router
+  namespace: ros2-zenoh-bench
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bench-router
+  template:
+    metadata:
+      labels:
+        app: bench-router
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: zenoh-router
+          image: quay.io/ecosystem-appeng/zenoh-router:1.9.0
+          imagePullPolicy: IfNotPresent
+          args: ["-c", "/etc/zenoh/router.json5"]
+          ports:
+            - containerPort: 7447
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7447
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: bench-configs
+              mountPath: /etc/zenoh/router.json5
+              subPath: router.json5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: bench-configs
+          configMap:
+            name: bench-configs

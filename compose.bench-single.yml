@@ -1,0 +1,79 @@
+services:
+
+  # ── Single Zenoh router ──────────────────────────────────────────────────
+  zenoh-router:
+    image: ${ROUTER_IMAGE:-quay.io/ecosystem-appeng/zenoh-router}:${ROUTER_TAG:-1.9.0}
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7447:7447/tcp"
+    volumes:
+      - ./tests/configs/router-default.json5:/etc/zenoh/router.json5:ro
+    networks:
+      - bench-net
+
+  # ── Publisher side ───────────────────────────────────────────────────────
+  bench-pub:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+      RATE_HZ: ${RATE_HZ:-10}
+      PUB_SLEEP: ${PUB_SLEEP:-10}
+      PUB_DURATION: ${PUB_DURATION:-80}
+    # Wrapper script reads env vars inside the container — avoids compose-level
+    # substitution of $RATE_HZ / $PUB_SLEEP in a command block scalar.
+    command: ["bash", "/tests/bench_run_pub.sh"]
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - bench-net
+    depends_on:
+      - zenoh-router
+
+  bridge-pub:
+    image: ${BRIDGE_IMAGE:-quay.io/ecosystem-appeng/zenoh-bridge-ros2dds}:${BRIDGE_TAG:-1.9.0}
+    platform: linux/arm64
+    network_mode: "service:bench-pub"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-baseline.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - bench-pub
+
+  # ── Subscriber side ──────────────────────────────────────────────────────
+  bench-sub:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+      SUB_SLEEP: ${SUB_SLEEP:-20}
+      MEASURE_DURATION: ${MEASURE_DURATION:-30}
+      WARMUP_SECS: ${WARMUP_SECS:-5}
+    command: ["bash", "/tests/bench_run_sub.sh"]
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - bench-net
+    depends_on:
+      - zenoh-router
+
+  bridge-sub:
+    image: ${BRIDGE_IMAGE:-quay.io/ecosystem-appeng/zenoh-bridge-ros2dds}:${BRIDGE_TAG:-1.9.0}
+    platform: linux/arm64
+    network_mode: "service:bench-sub"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-baseline.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - bench-sub
+
+networks:
+  bench-net:
+    driver: bridge
