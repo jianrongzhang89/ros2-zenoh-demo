@@ -8,6 +8,69 @@ Kubernetes / OpenShift resource requests and limits.
 
 ---
 
+## Memory Metrics Explained
+
+Two different memory metrics appear in this document depending on the platform.
+Understanding the difference is essential for interpreting the numbers correctly.
+
+### RSS — Resident Set Size
+
+RSS is the total physical RAM a process occupies right now, as reported by the
+OS.  "Resident" means the pages are in RAM, not swapped to disk.  It includes:
+
+- The process's heap and stack (memory it explicitly allocated)
+- The executable's own code (`.text` section, read from the binary on disk)
+- Shared library code (CycloneDDS, libc, tokio runtime, etc.)
+
+The key problem with RSS: **it double-counts shared pages.**  If 10 bridge
+sidecars on the same node all load the same CycloneDDS library, each pod's RSS
+includes the full library size even though the kernel holds only one physical
+copy.  RSS therefore overstates true per-container memory consumption.
+
+`podman stats` reports RSS.  It is used in the **Mac/Podman (Platform A)**
+section of this document.
+
+### working\_set\_bytes
+
+`working_set_bytes` is what Kubernetes actually uses for all resource
+accounting — scheduling decisions, OOM kill ordering, and HPA autoscaling.
+It is computed by the kernel's cgroup v2 memory controller as:
+
+```
+working_set = RSS − inactive_file
+```
+
+`inactive_file` is the portion of RSS consisting of file-backed, read-only
+pages (shared library code, the binary's `.text` and `.rodata` sections) that
+the kernel can **silently evict and reload from disk** at any time without
+harming the process.  Because those pages are reclaimable, Kubernetes does not
+count them against a container's memory usage.
+
+What remains — heap, stack, anonymous allocations, active file-backed pages —
+is what the container genuinely owns and cannot give back without crashing.
+That is the number that matters for sizing.
+
+`kubectl top` and the metrics API (`/apis/metrics.k8s.io/v1beta1/…`) both
+report `working_set_bytes`.  It is used in the **AWS OpenShift (Platform B)**
+section of this document.
+
+### Why the numbers look different
+
+For the same bridge process the two metrics diverge by roughly 3×:
+
+| Metric | Value | What it includes |
+|--------|------:|------------------|
+| RSS (Mac/Podman) | ~22 MB | heap + stack + bridge binary code + CycloneDDS library code |
+| working\_set (OCP) | ~7 MB | heap + stack only (library code evicted from the count) |
+
+The ~15 MB gap is almost entirely the bridge binary's executable code pages
+(32.7 MB on disk, partially resident) and the CycloneDDS/libc shared libraries.
+These are read-only and reclaimable, so they vanish from `working_set` but stay
+in RSS.  **Use `working_set_bytes` (the OCP figures) when setting Kubernetes
+resource requests and limits.**
+
+---
+
 ## Image Size
 
 | Image | Uncompressed (on-disk) | Layer breakdown |
