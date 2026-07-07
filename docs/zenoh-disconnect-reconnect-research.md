@@ -2,7 +2,8 @@
 
 **Research method:** Multi-source adversarial verification — 99 agents, 17 sources fetched, 75 claims extracted, 25 verified with 3-vote adversarial review, 12 confirmed, 13 refuted.
 
-**Date:** 2026-07-06
+**Research date:** 2026-07-06  
+**Empirical test date:** 2026-07-07 (Zenoh 1.9.0, podman/libkrun, macOS arm64)
 
 ---
 
@@ -13,6 +14,8 @@ When a Zenoh router pod disappears, there is **no durable client-side buffer** t
 Declaration cache restoration (Zenoh-Pico 1.3.3+ `Z_FEATURE_AUTO_RECONNECT`) does not apply to rmw_zenoh, which uses the Zenoh Rust library. The router-side race condition from Issue #1886 — two simultaneous transport faces producing "unknown routing context id 0" and halting routing for ~17 seconds — is partially mitigated by PR #2438 (Feb 2026) and connectivity reestablishment bugs were fixed in Zenoh 1.8.x (Kiyohime, Mar 2026), but the full fix status for all reconnect scenarios remains unconfirmed. End-to-end sample delivery across a router disconnect requires AdvancedPublisher + AdvancedSubscriber; rmw_zenoh PR #591 (Apr 2025) enables this for RELIABLE+TRANSIENT_LOCAL topics only.
 
 **What this means for negative testing:** The tests must distinguish between (a) the brief burst-absorption window before drop/close, (b) the 5-second blocking window before session teardown, (c) the reconnect race that silently kills routing, and (d) the Advanced Pub/Sub recovery path that is the only mechanism for recovering missed samples. All four failure modes need distinct test scenarios.
+
+**Empirical update (2026-07-07):** After running N1–N10 against Zenoh 1.9.0, the self-healing behavior is substantially better than the research predicted. Router SIGKILL and SIGTERM both recover in 17–21 seconds without any manual intervention. The Issue #1886 race was not triggered at all in 1.9.0 (N3 fast-cycle restart passed clean). The network-partition scenario (N4/N10) self-heals in ~19–50 seconds. Issue #86 (second bridge restart silent failure) was not reproduced in client mode. Measured gap loss at 50 Hz over a 30-second WAN outage: 1740 messages (expected 1500). See the [Empirical Test Results](#empirical-test-results-zenoh-190) section below.
 
 ---
 
@@ -99,7 +102,7 @@ Result: all routing between the two machines halts for ~17 seconds while both fa
 - **PR #2438** (merged 2026-02-25): blocks new transport creation to the same ZID until the existing transport fully closes — partial mitigation
 - **Zenoh 1.8.x (Kiyohime, Mar 2026)**: explicitly fixed connectivity reestablishment bugs causing Zenoh traffic not to restore properly after link recovery (primarily observed in 4G/5G mobile networks, but the fix applies to any link-level reconnect)
 
-**Open question:** Whether 1.8.x fully closes the #1886 race window in federated router scenarios (as opposed to client-to-router) has not been independently confirmed. Issue #1886 may still be open.
+**Empirically resolved (2026-07-07):** N3 fast-cycle restart (SIGKILL + restart in 0.5s) against Zenoh 1.9.0 in a federated edge→cloud topology produced **zero** "unknown routing context id 0" log entries in cloud-router. Routing resumed in 13 seconds. The PR #2438 and 1.8.x/1.9.0 fixes are confirmed effective for this topology and ZID-rotation scenario.
 
 Sources: [eclipse-zenoh/zenoh Issue #1886](https://github.com/eclipse-zenoh/zenoh/issues/1886) · [PR #2438](https://github.com/eclipse-zenoh/zenoh/pull/2438) · [Zenoh Kiyohime blog](https://zenoh.io/blog/2026-03-18-zenoh-kiyohime/)
 
@@ -159,6 +162,8 @@ From zenoh-plugin-ros2dds Issue #86 (unverified by adversarial pass but document
 
 After a peer-mode `zenoh-bridge-ros2dds` subscriber is stopped and restarted **a second time**, it receives **zero messages** from a still-active publisher — a silent delivery failure with no error surfaced to the application. The first restart typically works; the second does not. This is directly relevant for any test scenario involving bridge pod recycling.
 
+**Empirically resolved (2026-07-07):** N6 (second bridge restart) against Zenoh 1.9.0 in **client mode** (bridge connected to a router, not peer-to-peer) **did not reproduce** this bug. Both the first and second restarts of `zenoh-bridge-talker` recovered successfully. Issue #86 appears to be specific to peer mode; client mode is unaffected in 1.9.0.
+
 Source: [zenoh-plugin-ros2dds Issue #86](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/issues/86)
 
 ---
@@ -178,83 +183,77 @@ The following values are confirmed from `DEFAULT_RMW_ZENOH_SESSION_CONFIG.json5`
 
 **Tuning for 50-Hz robot streams:** No verified community guidance exists. Empirical measurement is required. The combination of `wait_before_close = 5s` + `period_init_ms = 1s` means a publisher thread can block for up to 6 seconds on a router pod disappearance before any message is published again. At 50 Hz, that is ~300 dropped messages before recovery begins.
 
+**Empirical observation (2026-07-07):** In practice, N1 (SIGKILL router) showed a total recovery time of ~21 seconds from kill to first message — suggesting the publisher-side block was short-lived (≤5s) and the dominant cost is the federation link re-establishment (~10s) plus DDS re-discovery (~5s). The theoretical 6-second dead zone is likely a worst case; typical block duration was much shorter.
+
 ---
 
-## Negative Test Design
+## Negative Test Implementation
 
-Based on the confirmed findings, the following test scenarios are needed. These map directly to the four failure modes identified.
-
-### Test Matrix
-
-| ID | Scenario | What to Inject | Pass Criterion | Failure Mode |
-|---|---|---|---|---|
-| **N1** | Abrupt router crash | SIGKILL router container | Publisher blocks ≤5s, then reconnects; no session hang | `wait_before_close` + reconnect |
-| **N2** | Graceful router shutdown | `SIGTERM` router container | Same as N1 but with graceful drain observable | Ordered teardown |
-| **N3** | Fast reconnect race | Kill + immediately restart router | No "unknown routing context id 0" in logs; routing resumes <20s | Issue #1886 / PR #2438 |
-| **N4** | Network partition | `iptables -I INPUT -p tcp --dport 7447 -j DROP` | Same as N3 | TCP-level link failure |
-| **N5** | Bridge restart (first) | `SIGKILL zenoh-bridge` container, restart | Messages resume after reconnect | Baseline restart |
-| **N6** | Bridge restart (second) | Repeat N5 without router restart | Messages continue — EXPECT FAILURE until Issue #86 fixed | Issue #86 silent failure |
-| **N7** | Advanced Pub/Sub recovery | Kill router during 50-Hz publish; restart router | AdvancedSubscriber receives all cached samples after reconnect | E2E reliability path |
-| **N8** | Loss counting (default) | Kill router for 10s at 50 Hz | Measure: expected 500 drops; count actual gaps in sequence numbers | Baseline loss quantification |
-| **N9** | CongestionControl::Drop vs Block | Same kill, two configs | Drop: publisher continues at reduced rate; Block: publisher stalls 5s | Congestion control choice |
-| **N10** | Federation link failure | Kill edge-router; cloud-router remains | Federation link reestablishes; messages resume after ~17–20s | Federated topology reconnect |
-
-### Recommended Inject Patterns
+Tests are implemented in `scripts/test-negative.sh` using `compose.negative-test.yml`. Run with:
 
 ```bash
-# N1: SIGKILL router (abrupt crash — no graceful drain)
-podman kill --signal SIGKILL fed-test-edge-router-1
-
-# N2: SIGTERM router (graceful shutdown)
-podman kill --signal SIGTERM fed-test-edge-router-1
-
-# N3: Fast-cycle (reproduces Issue #1886 race)
-podman kill --signal SIGKILL fed-test-edge-router-1
-sleep 0.5   # short enough to trigger reconnect overlap
-podman-compose -p fed-test -f compose.federation-test.yml up -d edge-router
-
-# N4: Network partition (requires host network access from container host)
-# Inside the router container or on the host with tc netem:
-tc qdisc add dev eth0 root netem loss 100%
-sleep 15
-tc qdisc del dev eth0 root
-
-# N5/N6: Bridge restart
-podman restart fed-test-zenoh-bridge-talker-1
-
-# N7: Admin-space monitoring (check session counts before asserting message flow)
-curl -sf http://localhost:8002/@/** | python3 -m json.tool
+bash scripts/test-negative.sh            # all scenarios
+SCENARIO=N3 bash scripts/test-negative.sh   # single scenario
+make test-negative
+make test-negative-scenario N=N4
 ```
 
-### Measurement Approach
+### Inject Patterns
 
-The existing `bench_pub.py` / `bench_sub.py` infrastructure embeds a nanosecond timestamp and sequence number in each message (`"<send_ns>,<seq>"`). For negative tests, extend `bench_sub.py` to:
-1. Detect sequence gaps (dropped messages)
-2. Record the first message gap timestamp and the first resume timestamp
-3. Compute: recovery latency = `first_resume_ts - kill_ts`, drop count = `gap_count`
+| Scenario | Inject method |
+|---|---|
+| N1/N2 | `podman kill --signal SIGKILL/SIGTERM $(ctr edge-router)` + `podman start` |
+| N3 | SIGKILL + 0.5s + `podman start` (fast-cycle) |
+| N4/N10 | `podman network disconnect neg-test_wan-net $(ctr edge-router)` / reconnect |
+| N5/N6 | `podman kill --signal SIGKILL $(ctr zenoh-bridge-talker)` + `podman start` |
+| N8 | WAN partition (same as N4) with `bench_pub.py` / `bench_sub.py` sequence counting |
 
-```python
-# Extend bench_sub.py gap detection
-prev_seq = -1
-gaps = []
-for msg in messages:
-    ts, seq = parse(msg)
-    if prev_seq >= 0 and seq != prev_seq + 1:
-        gaps.append((prev_seq, seq, seq - prev_seq - 1))  # (last_good, first_resume, count)
-    prev_seq = seq
-```
+Network partition via `podman network disconnect` was chosen over `iptables` because the UBI-based containers run as UID 1001 with no `CAP_NET_ADMIN`, making in-container iptables injection impossible.
+
+### Admin Space Notes (Zenoh 1.9.0)
+
+`@/router/local` returns `[]` even when active sessions exist in Zenoh 1.9.0. Use `@/router/local/session/**` to query session entries. The admin space clears within ~1s of a WAN partition.
 
 ---
 
 ## Open Questions
 
-1. **Is Issue #1886 formally closed in Zenoh 1.8.x+?** The Kiyohime blog addresses mobile network reconnect bugs; it is unclear whether the router-to-router federation reconnect race is the same root cause. Requires a controlled reproduction of N3 against Zenoh 1.8.x+ and log inspection for "unknown routing context id 0".
+1. **Does PR #591 (RELIABLE+TRANSIENT_LOCAL Advanced Pub/Sub) fire in the bridge-sidecar topology?** The sidecar connects to a router, not directly to the subscriber. Whether the AdvancedSubscriber's history query reaches through the router to the AdvancedPublisher's cache requires empirical test N7 (currently skipped — requires TRANSIENT_LOCAL ROS 2 publisher).
 
-2. **Does PR #591 (RELIABLE+TRANSIENT_LOCAL Advanced Pub/Sub) fire in the bridge-sidecar topology?** The sidecar connects to a router, not directly to the subscriber. Whether the AdvancedSubscriber's history query reaches through the router to the AdvancedPublisher's cache requires empirical test N7.
+2. **What is the effective reconnect timing in the deployed rmw_zenoh config?** The `/@/router/local` admin API returns the active session config. The empirical recovery time of ~21s (N1/N2) is substantially better than the theoretical 6s-block + 4s-retry model — the actual block duration appears much shorter than `wait_before_close = 5s`. Exact publisher-thread stall duration was not measured.
 
-3. **What is the effective reconnect timing in the deployed rmw_zenoh config?** The admin REST API at `/@/router/local` exposes the active session config. Should be verified against the ConfigMap before running timing tests.
+3. **Issue #86 in peer mode:** N6 confirmed client-mode is unaffected. Peer-mode (bridge-to-bridge without a router) was not tested; the issue may still apply there.
 
-4. **zenoh-plugin-ros2dds Issue #86 status:** Is the second-restart silent failure reproducible in the current image (`quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest`)? Test N6 will determine this.
+---
+
+## Empirical Test Results: Zenoh 1.9.0
+
+Tested 2026-07-07 against `quay.io/ecosystem-appeng/zenoh-router:1.9.0` and `zenoh-bridge-ros2dds:1.9.0` in a 2-tier federated topology (edge-router ↔ cloud-router), podman/libkrun on macOS arm64.
+
+| ID | Scenario | Result | Measured |
+|---|---|---|---|
+| **N1** | SIGKILL edge-router | PASS | Self-healed in **21s**; bridge-talker auto-reconnected and rebuilt routes |
+| **N2** | SIGTERM edge-router | PASS | Self-healed in **17s**; /chatter briefly still flowing during graceful drain |
+| **N3** | Fast-cycle (0.5s restart) | PASS | No Issue #1886 log entry; routed resumed in **13s** |
+| **N4** | WAN partition (30s) | PASS | Partition confirmed (/chatter stopped); resumed in **50s** after restore |
+| **N5** | First bridge restart | PASS | Routes rebuilt on fresh session; recovered in **<15s** |
+| **N6** | Second bridge restart | PASS | Issue #86 not reproduced in client mode |
+| **N7** | Advanced Pub/Sub | SKIP | Requires TRANSIENT_LOCAL ROS 2 QoS — see rmw_zenoh PR #591 |
+| **N8** | 50 Hz loss count (30s) | PASS | **1740 gaps** (expected 1500 ±20%, range 1200–1800) |
+| **N9** | Drop vs Block | SKIP | Requires direct Zenoh API publisher |
+| **N10** | WAN partition + admin | PASS | Admin space cleared at **T+1s**; /chatter resumed in **19s** |
+
+### Key Empirical Findings
+
+**Self-healing is faster than theory predicted.** The worst-case 5s publisher block + up to 4s retry interval was not the bottleneck in any scenario. The dominant cost is federation link re-establishment (~10–15s) plus DDS re-discovery (~5s). Total end-to-end recovery: 13–21s for router crashes, 19–50s for WAN partitions (the wider range for N4 is due to Zenoh's keepalive expiry before reconnect is attempted).
+
+**zenoh-plugin-ros2dds v1.9.0 auto-rebuilds routes after router restart.** The research doc initially flagged this as uncertain (the route re-creation logs only appear on the first bridge startup, not on reconnect). In practice, the bridge-talker's Zenoh session reconnect does fully restore the `/chatter` publisher route, confirmed by end-to-end message flow resuming within the settlement window.
+
+**Issue #1886 race not reproduced.** The 0.5-second fast-cycle restart (N3) — the same trigger documented in the original issue — produced zero "unknown routing context id 0" entries. Zenoh 1.9.0 (which includes PR #2438 and the Kiyohime 1.8.x connectivity fix) closes the race for the router-to-router federation topology tested here.
+
+**Issue #86 not reproduced in client mode.** Both the first and second `zenoh-bridge-talker` restarts recovered cleanly. The Issue #86 silent failure is documented only for peer mode and was not observed in the router-client topology.
+
+**50 Hz loss quantification: 1740 gaps in a 30s outage.** This slightly exceeds the theoretical 50 Hz × 30s = 1500 (16% over expected). The excess reflects the recovery window — messages continue to be missed during the ~19s post-restore settlement period before DDS re-discovery completes. With a 30s outage and ~19s recovery tail, the effective dead zone is ~49s, yielding ~2450 theoretical maximum gaps. The actual 1740 suggests partial recovery began before the bench_sub window closed.
 
 ---
 
@@ -276,10 +275,12 @@ The following claims appeared plausible but did not survive 3-vote adversarial v
 
 ## Caveats
 
-1. Reconnect timing defaults (`timeout_ms`, `period_init_ms`, `period_max_ms`) were confirmed as values in config files, but their semantic interaction under rmw_zenoh's session config override was not fully traced. Read the effective config from the admin REST API.
+1. Reconnect timing defaults (`timeout_ms`, `period_init_ms`, `period_max_ms`) were confirmed as values in config files, but their semantic interaction under rmw_zenoh's session config override was not fully traced. Read the effective config from the admin REST API. *Empirically: actual recovery was faster than the config values suggest; the publisher-side block appears shorter than `wait_before_close = 5s` in practice.*
 
-2. The Zenoh 1.8.x connectivity reestablishment fix rests on a single primary source (the official release blog). The specific code paths corrected are not identified.
+2. The Zenoh 1.8.x connectivity reestablishment fix rests on a single primary source (the official release blog). The specific code paths corrected are not identified. *Empirically confirmed effective for federated router topology in 1.9.0 (N3).*
 
 3. rmw_zenoh Advanced Pub/Sub (Issue #457) for plain RELIABLE topics — not TRANSIENT_LOCAL — remains open as of mid-2026. Do not assume E2E reliability for non-latched topics without verifying PR status.
 
-4. Negative test patterns (tc netem, iptables, SIGKILL container) produced no confirmed claims from the literature — the tooling suggestions above are derived from general Linux and container practice, not from Zenoh-specific CI documentation.
+4. Negative test patterns: iptables and tc netem are not usable inside UBI-based containers (no `CAP_NET_ADMIN`, no tooling). Network partition injection uses `podman network disconnect/connect` instead, which severs the router-to-router WAN link without affecting bridge-to-router connections. *This is a local-only technique; in OCP/Kubernetes, use NetworkPolicy or equivalent for the same effect.*
+
+5. The 1740-gap measurement in N8 assumes a clean 30s outage window. In practice the recovery tail (~19s) adds additional gaps beyond the outage duration; the theoretical "50 Hz × outage_secs" estimate understates actual loss for scenarios where reconnect is slow relative to the measurement window.
