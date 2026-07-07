@@ -1,0 +1,112 @@
+services:
+
+  # ── Cloud tier ──────────────────────────────────────────────────────────────
+
+  cloud-router:
+    image: quay.io/ecosystem-appeng/zenoh-router:latest
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7447:7447/tcp"
+      - "8001:8001/tcp"
+    volumes:
+      - ${CLOUD_ROUTER_CONFIG:-./tests/configs/router-cloud.json5}:/etc/zenoh/router.json5:ro
+    networks:
+      - cloud-net
+      - wan-net
+
+  # ROS 2 listener — DDS subscriber, also hosts bench_sub.py exec runs.
+  # ./tests is mounted so the test script can exec bench_sub.py inside this container.
+  ros2-listener:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        sleep 15 &&
+        exec ros2 run demo_nodes_cpp listener
+      "
+    depends_on:
+      - cloud-router
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - cloud-net
+
+  zenoh-bridge-listener:
+    image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
+    platform: linux/arm64
+    network_mode: "service:ros2-listener"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-cloud.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - ros2-listener
+
+  # ── Edge tier ───────────────────────────────────────────────────────────────
+
+  # edge-router is the primary failure-injection target for N1–N4, N8, N10.
+  # Killing and restarting this container drives all router-kill scenarios.
+  edge-router:
+    image: quay.io/ecosystem-appeng/zenoh-router:latest
+    platform: linux/arm64
+    command: ["-c", "/etc/zenoh/router.json5"]
+    ports:
+      - "7448:7448/tcp"
+      - "8002:8002/tcp"
+    volumes:
+      - ${EDGE_ROUTER_CONFIG:-./tests/configs/router-edge.json5}:/etc/zenoh/router.json5:ro
+    networks:
+      - edge-net
+      - wan-net
+    depends_on:
+      - cloud-router
+
+  # ros2-talker hosts bench_pub.py exec runs via 'podman exec -d'.
+  # multi-pub.sh keeps /chatter alive for check_flows assertions;
+  # bench_pub.py is exec'd alongside it for N8 gap measurement.
+  ros2-talker:
+    image: ${DEMO_IMAGE:-quay.io/jianrzha/ros2-zenoh-demo}:${DEMO_VERSION:-0.0.7}
+    platform: linux/arm64
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      ROS_HOME: /tmp
+    command: >
+      bash -c "
+        set +u && source /opt/ros/jazzy/setup.bash && set -u &&
+        echo '[talker] Waiting for bridge sidecar to settle...' &&
+        sleep 12 &&
+        exec bash /tests/multi-pub.sh
+      "
+    depends_on:
+      - edge-router
+    volumes:
+      - ./tests:/tests:ro
+    networks:
+      - edge-net
+
+  # zenoh-bridge-talker is the failure target for N5+N6 (bridge restart scenarios).
+  zenoh-bridge-talker:
+    image: quay.io/ecosystem-appeng/zenoh-bridge-ros2dds:latest
+    platform: linux/arm64
+    network_mode: "service:ros2-talker"
+    command: ["-c", "/etc/zenoh/bridge.json5"]
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tests/configs/bridge-edge.json5:/etc/zenoh/bridge.json5:ro
+    depends_on:
+      - ros2-talker
+
+networks:
+  edge-net:
+    driver: bridge
+  cloud-net:
+    driver: bridge
+  wan-net:
+    driver: bridge
