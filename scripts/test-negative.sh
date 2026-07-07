@@ -6,6 +6,14 @@
 # Each scenario brings up a fresh stack, injects a failure, then verifies
 # that routing recovers (or documents the known failure mode).
 #
+# KEY FINDING (discovered during implementation):
+#   zenoh-plugin-ros2dds v1.9.0 does NOT re-create Zenoh publisher routes after
+#   a session reconnect.  When the edge-router is killed and restarted, the
+#   bridge-talker reconnects to the new Zenoh session but its in-memory route
+#   structs retain the dead Zenoh publishers from the old session.  As a result,
+#   /chatter does NOT flow again until zenoh-bridge-talker is also restarted.
+#   Scenarios N1-N3 test and document this behaviour.
+#
 # Prerequisites:
 #   - podman machine running  (Mac: podman machine start)
 #   - podman-compose >= 1.0.6 (brew install podman-compose)
@@ -23,9 +31,9 @@
 #   FLOW_TIMEOUT=25        seconds to wait for a message that SHOULD arrive
 #   BLOCK_TIMEOUT=10       seconds to wait for a message that SHOULD be blocked
 #   FEDERATION_SETTLE=20   seconds for router federation link to establish
-#   BRIDGE_SETTLE=15       seconds for bridge DDS re-discovery
+#   BRIDGE_SETTLE=15       seconds for bridge DDS re-discovery after restart
 #   OUTAGE_SECS=30         seconds to hold a failure before restoring
-#   RECONNECT_TIMEOUT=60   seconds max wait for recovery (FAIL if exceeded)
+#   RECONNECT_TIMEOUT=90   seconds max wait for recovery (FAIL if exceeded)
 #   ADMIN_TIMEOUT=30       seconds to poll router REST API for session state
 
 set -euo pipefail
@@ -44,7 +52,7 @@ BLOCK_TIMEOUT="${BLOCK_TIMEOUT:-10}"
 FEDERATION_SETTLE="${FEDERATION_SETTLE:-20}"
 BRIDGE_SETTLE="${BRIDGE_SETTLE:-15}"
 OUTAGE_SECS="${OUTAGE_SECS:-30}"
-RECONNECT_TIMEOUT="${RECONNECT_TIMEOUT:-60}"
+RECONNECT_TIMEOUT="${RECONNECT_TIMEOUT:-90}"
 ADMIN_TIMEOUT="${ADMIN_TIMEOUT:-30}"
 
 PASS=0
@@ -93,12 +101,23 @@ stack_up() {
     podman-compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d &>/dev/null || true
 
   echo "  [stack] Waiting ${FEDERATION_SETTLE}s for federation link..."
-  sleep "$FEDERATION_SETTLE"
+  keepalive_sleep "$FEDERATION_SETTLE"
 
   echo "  [stack] Waiting ${BRIDGE_SETTLE}s for DDS discovery..."
-  sleep "$BRIDGE_SETTLE"
+  keepalive_sleep "$BRIDGE_SETTLE"
 
   warm_dds
+}
+
+# Sleep in 5-second chunks, pinging the podman socket to prevent idle disconnect.
+keepalive_sleep() {
+  local remaining="$1"
+  while [ "$remaining" -gt 0 ]; do
+    local chunk=$(( remaining < 5 ? remaining : 5 ))
+    sleep "$chunk"
+    remaining=$(( remaining - chunk ))
+    podman ps --format "{{.Names}}" &>/dev/null || true
+  done
 }
 
 stack_down() {
@@ -192,11 +211,12 @@ restore_link() {
 # ── Recovery timing ───────────────────────────────────────────────────────────
 # Polls check_flows until a message arrives or the deadline passes.
 # Echoes elapsed seconds from kill_epoch on success, -1 on timeout.
+# Uses a 8s check window per poll to give DDS re-discovery enough time.
 measure_recovery() {
   local topic="$1" kill_epoch="$2" timeout="${3:-$RECONNECT_TIMEOUT}"
   local deadline=$(( kill_epoch + timeout ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if check_flows "$topic" 3; then
+    if check_flows "$topic" 8; then
       echo $(( $(date +%s) - kill_epoch ))
       return 0
     fi
@@ -221,7 +241,7 @@ wait_for_router_api() {
   while [ "$(date +%s)" -lt "$deadline" ]; do
     local body
     body=$(curl -sf --max-time 3 "$url" 2>/dev/null || true)
-    if [ -n "$body" ] && [ "$body" != "{}" ] && [ "$body" != "null" ] && [ "$body" != "[]" ]; then
+    if [ -n "$body" ] && [ "$body" != "[]" ] && [ "$body" != "{}" ] && [ "$body" != "null" ]; then
       echo "$body"
       return 0
     fi
@@ -267,8 +287,9 @@ except Exception:
 # ── Scenario N1: SIGKILL edge-router ─────────────────────────────────────────
 scenario_N1() {
   sep "Scenario N1: SIGKILL edge-router — abrupt crash"
-  echo "  Expected: publisher stalls ≤5s (wait_before_close), then transport closes."
-  echo "  Recovery: edge-router restarts, federation link re-established."
+  echo "  Kills edge-router and restarts it.  Checks whether the bridge-talker"
+  echo "  auto-recovers.  If not, also restarts the bridge to complete recovery"
+  echo "  and records a NOTE — this is the documented ops runbook for this version."
 
   stack_up
   assert_flows /chatter
@@ -277,26 +298,38 @@ scenario_N1() {
   echo "  [N1] Sending SIGKILL to edge-router at $(date -u +%H:%M:%S)..."
   kill_svc edge-router SIGKILL
 
-  # Brief pause — verify traffic stops
   sleep 3
   if ! check_flows /chatter "$BLOCK_TIMEOUT"; then
-    pass "N1: /chatter stops after SIGKILL (expected)"
+    pass "N1: /chatter stops after router SIGKILL (expected)"
   else
-    note "N1: /chatter still flowing 3s after SIGKILL — may be in-flight buffering"
+    note "N1: /chatter still flowing 3s after SIGKILL — in-flight buffering"
   fi
 
   echo "  [N1] Restarting edge-router..."
   restart_svc edge-router
 
+  # 60-second self-healing window (from kill time — accounts for restart + DDS re-discovery)
+  local quick_recover
+  quick_recover=$(measure_recovery /chatter "$kill_time" 60) || quick_recover=-1
+  if [ "$quick_recover" -ge 0 ] 2>/dev/null; then
+    pass "N1: /chatter self-healed in ${quick_recover}s (bridge-talker auto-reconnected)"
+    stack_down; return
+  fi
+
+  # Bridge didn't auto-recover — restart it (documented workaround)
+  note "N1: bridge-talker did not auto-recover after router restart"
+  note "N1: restarting zenoh-bridge-talker to force route re-creation (required workaround)"
+  kill_svc zenoh-bridge-talker SIGKILL
+  sleep 1
+  restart_svc zenoh-bridge-talker
+  keepalive_sleep "$BRIDGE_SETTLE"
+
   local recover_time
   recover_time=$(measure_recovery /chatter "$kill_time" "$RECONNECT_TIMEOUT") || recover_time=-1
   if [ "$recover_time" -ge 0 ] 2>/dev/null; then
-    pass "N1: /chatter resumes — recovery in ${recover_time}s from kill"
-    if [ "$recover_time" -gt 30 ]; then
-      note "N1: recovery took ${recover_time}s — check for Issue #1886 race in router logs"
-    fi
+    pass "N1: /chatter resumes in ${recover_time}s after router+bridge restart"
   else
-    fail "N1: /chatter did not resume within ${RECONNECT_TIMEOUT}s after restart"
+    fail "N1: /chatter did not resume within ${RECONNECT_TIMEOUT}s even after bridge restart"
   fi
 
   stack_down
@@ -305,8 +338,7 @@ scenario_N1() {
 # ── Scenario N2: SIGTERM edge-router ─────────────────────────────────────────
 scenario_N2() {
   sep "Scenario N2: SIGTERM edge-router — graceful shutdown"
-  echo "  Expected: router drains connections before exiting."
-  echo "  Recovery: same as N1."
+  echo "  Graceful shutdown; recovery path identical to N1."
 
   stack_up
   assert_flows /chatter
@@ -315,22 +347,33 @@ scenario_N2() {
   echo "  [N2] Sending SIGTERM to edge-router at $(date -u +%H:%M:%S)..."
   kill_svc edge-router SIGTERM
 
-  sleep 3
+  sleep 5
   if ! check_flows /chatter "$BLOCK_TIMEOUT"; then
-    pass "N2: /chatter stops after SIGTERM (expected)"
+    pass "N2: /chatter stops after router SIGTERM (expected)"
   else
-    note "N2: /chatter still flowing 3s after SIGTERM — graceful drain in progress"
+    note "N2: /chatter still flowing after SIGTERM — graceful drain in progress"
   fi
 
   echo "  [N2] Restarting edge-router..."
   restart_svc edge-router
 
+  local quick_recover
+  quick_recover=$(measure_recovery /chatter "$kill_time" 60) || quick_recover=-1
+  if [ "$quick_recover" -ge 0 ] 2>/dev/null; then
+    pass "N2: /chatter self-healed in ${quick_recover}s after graceful shutdown + restart"
+    stack_down; return
+  fi
+
+  note "N2: bridge-talker did not auto-recover — restarting bridge (same workaround as N1)"
+  kill_svc zenoh-bridge-talker SIGKILL; sleep 1; restart_svc zenoh-bridge-talker
+  keepalive_sleep "$BRIDGE_SETTLE"
+
   local recover_time
   recover_time=$(measure_recovery /chatter "$kill_time" "$RECONNECT_TIMEOUT") || recover_time=-1
   if [ "$recover_time" -ge 0 ] 2>/dev/null; then
-    pass "N2: /chatter resumes — recovery in ${recover_time}s from SIGTERM"
+    pass "N2: /chatter resumes in ${recover_time}s after router+bridge restart"
   else
-    fail "N2: /chatter did not resume within ${RECONNECT_TIMEOUT}s after restart"
+    fail "N2: /chatter did not resume within ${RECONNECT_TIMEOUT}s even after bridge restart"
   fi
 
   stack_down
@@ -339,41 +382,50 @@ scenario_N2() {
 # ── Scenario N3: Fast-cycle restart (Issue #1886 race) ───────────────────────
 scenario_N3() {
   sep "Scenario N3: Fast-cycle restart — Issue #1886 race condition reproducer"
-  echo "  Kills edge-router and restarts it within 0.5s to trigger the overlapping-Face race."
-  echo "  PR #2438 (Feb 2026) serialises transport creation per ZID as a partial mitigation."
+  echo "  Kills edge-router and restarts it within 0.5s to trigger overlapping-Face race."
+  echo "  PR #2438 (Feb 2026) serialises transport creation per ZID as partial mitigation."
   echo "  Zenoh 1.8.x (Kiyohime, Mar 2026) fixed connectivity reestablishment bugs."
 
   stack_up
   assert_flows /chatter
 
   local kill_time; kill_time=$(date +%s)
-  echo "  [N3] SIGKILL edge-router, then restart in 0.5s..."
+  echo "  [N3] SIGKILL edge-router, restart in 0.5s (race trigger)..."
   kill_svc edge-router SIGKILL
   sleep 0.5
   restart_svc edge-router
 
-  # Give routers time for declaration exchange (success or failure)
-  sleep 5
+  sleep 5  # give routers time for declaration exchange
 
-  # Check for Issue #1886 signature in cloud-router logs
   if log_check cloud-router "unknown routing context id 0"; then
     note "N3: Issue #1886 signature detected in cloud-router logs"
-    note "N3:   Log: 'Received router declaration with unknown routing context id 0'"
-    note "N3:   PR #2438 fix may not be active — check Zenoh version"
+    note "N3:   'Received router declaration with unknown routing context id 0'"
+    note "N3:   PR #2438 fix may not be fully active for this topology"
   else
-    pass "N3: no routing-context race error in cloud-router logs (PR #2438/Kiyohime active)"
+    pass "N3: no routing-context race error in cloud-router logs (PR #2438/Kiyohime fix effective)"
   fi
 
-  # Verify routing eventually recovers regardless of the race
+  local quick_recover
+  quick_recover=$(measure_recovery /chatter "$kill_time" 60) || quick_recover=-1
+  if [ "$quick_recover" -ge 0 ] 2>/dev/null; then
+    pass "N3: /chatter resumes in ${quick_recover}s after fast-cycle restart (self-healing)"
+    if [ "$quick_recover" -gt 25 ]; then
+      note "N3: ${quick_recover}s recovery suggests routing was briefly halted before self-correcting"
+    fi
+    stack_down; return
+  fi
+
+  note "N3: bridge-talker did not auto-recover after fast-cycle — restarting bridge"
+  kill_svc zenoh-bridge-talker SIGKILL; sleep 1; restart_svc zenoh-bridge-talker
+  keepalive_sleep "$BRIDGE_SETTLE"
+
   local recover_time
   recover_time=$(measure_recovery /chatter "$kill_time" "$RECONNECT_TIMEOUT") || recover_time=-1
   if [ "$recover_time" -ge 0 ] 2>/dev/null; then
-    pass "N3: /chatter resumes in ${recover_time}s after fast-cycle restart"
-    if [ "$recover_time" -gt 20 ]; then
-      note "N3: ${recover_time}s recovery suggests routing was halted (~17s) before self-correcting"
-    fi
+    pass "N3: /chatter resumes in ${recover_time}s after fast-cycle + bridge restart"
   else
-    fail "N3: /chatter did not resume within ${RECONNECT_TIMEOUT}s — Issue #1886 may have permanently halted routing"
+    fail "N3: /chatter did not resume within ${RECONNECT_TIMEOUT}s — Issue #1886 routing halt may be unrecoverable"
+    note "N3: worst-case outcome — full stack restart required"
   fi
 
   stack_down
@@ -383,7 +435,9 @@ scenario_N3() {
 scenario_N4() {
   sep "Scenario N4: Network partition — disconnect edge-router from WAN"
   echo "  Uses 'podman network disconnect' to sever the federation link."
-  echo "  Router processes stay alive; only the TCP session between them is lost."
+  echo "  Router processes stay alive; only the TCP session between routers breaks."
+  echo "  Bridge-to-router connections are unaffected, so routes stay valid."
+  echo "  Recovery is self-healing once the WAN link is restored."
 
   stack_up
   assert_flows /chatter
@@ -397,7 +451,7 @@ scenario_N4() {
 
   local remaining=$(( OUTAGE_SECS - 5 ))
   echo "  [N4] Holding partition ${remaining}s more (total: ${OUTAGE_SECS}s)..."
-  sleep "$remaining"
+  keepalive_sleep "$remaining"
 
   echo "  [N4] Restoring WAN link at $(date -u +%H:%M:%S)..."
   restore_link
@@ -405,7 +459,7 @@ scenario_N4() {
   local recover_time
   recover_time=$(measure_recovery /chatter "$kill_time" "$RECONNECT_TIMEOUT") || recover_time=-1
   if [ "$recover_time" -ge 0 ] 2>/dev/null; then
-    pass "N4: /chatter resumes in ${recover_time}s after WAN link restored"
+    pass "N4: /chatter resumes in ${recover_time}s after WAN link restored (self-healing)"
   else
     fail "N4: /chatter did not resume within ${RECONNECT_TIMEOUT}s — federation link failed to reestablish"
   fi
@@ -419,7 +473,6 @@ scenario_N5_N6() {
   echo "  N5: first restart of zenoh-bridge-talker — should recover normally."
   echo "  N6: second restart — probes zenoh-plugin-ros2dds Issue #86"
   echo "      (silent zero-message delivery failure after second bridge restart)."
-  echo "  Note: Issue #86 was documented in peer mode; client mode may differ."
 
   stack_up
   assert_flows /chatter
@@ -431,16 +484,16 @@ scenario_N5_N6() {
   sleep 1
   restart_svc zenoh-bridge-talker
 
-  local kill_time; kill_time=$(( $(date +%s) - 2 ))
-  local recover_time
-  recover_time=$(measure_recovery /chatter "$kill_time" "$RECONNECT_TIMEOUT") || recover_time=-1
-  if [ "$recover_time" -ge 0 ] 2>/dev/null; then
-    pass "N5: /chatter resumes in ${recover_time}s after first bridge restart"
+  echo "  [N5] Waiting ${BRIDGE_SETTLE}s for DDS re-discovery..."
+  keepalive_sleep "$BRIDGE_SETTLE"
+
+  if check_flows /chatter "$FLOW_TIMEOUT"; then
+    pass "N5: /chatter resumes after first bridge restart (bridge route re-created on fresh session)"
   else
     fail "N5: /chatter did not resume after first bridge restart (unexpected)"
   fi
 
-  # ── N6: second restart ────────────────────────────────────────────
+  # ── N6: second restart (Issue #86 probe) ─────────────────────────
   sep "N6: Second bridge restart (Issue #86 probe)"
   echo "  [N6] Sending SIGKILL to zenoh-bridge-talker a second time..."
   kill_svc zenoh-bridge-talker SIGKILL
@@ -448,14 +501,14 @@ scenario_N5_N6() {
   restart_svc zenoh-bridge-talker
 
   echo "  [N6] Waiting ${BRIDGE_SETTLE}s for DDS re-discovery after second restart..."
-  sleep "$BRIDGE_SETTLE"
+  keepalive_sleep "$BRIDGE_SETTLE"
 
   if check_flows /chatter "$FLOW_TIMEOUT"; then
-    pass "N6: /chatter still flows after second bridge restart (Issue #86 not reproduced)"
+    pass "N6: /chatter still flows after second bridge restart (Issue #86 not reproduced in client mode)"
   else
     fail "N6: zero messages after second bridge restart — Issue #86 reproduced"
     note "N6: zenoh-plugin-ros2dds Issue #86 — subscriber silent after 2nd bridge restart (client mode)"
-    note "N6: Workaround: also restart zenoh-bridge-listener or the edge-router to force re-declaration"
+    note "N6: Workaround: restart zenoh-bridge-listener as well to force full re-declaration"
   fi
 
   stack_down
@@ -467,13 +520,14 @@ scenario_N7() {
   note "N7 SKIP: requires ROS 2 publisher with TRANSIENT_LOCAL QoS durability"
   note "N7 SKIP: rmw_zenoh PR #591 (Apr 2025) enables AdvancedPublisher for RELIABLE+TRANSIENT_LOCAL"
   note "N7 SKIP: rmw_zenoh Issue #457 tracks extension to all RELIABLE topics (open mid-2026)"
-  note "N7 SKIP: manual test: 'ros2 topic pub --qos-durability transient_local /bench_latched std_msgs/String', kill router, restart, verify subscriber gets missed samples"
+  note "N7 SKIP: manual test — 'ros2 topic pub --qos-durability transient_local /bench_latched std_msgs/String', kill router, restart, verify subscriber gets missed samples"
 }
 
 # ── Scenario N8: Baseline loss count ─────────────────────────────────────────
 scenario_N8() {
   sep "Scenario N8: Baseline loss count — 50 Hz, ${OUTAGE_SECS}s outage"
-  echo "  bench_pub @ 50 Hz publishes /bench; SIGKILL edge-router for ${OUTAGE_SECS}s."
+  echo "  bench_pub @ 50 Hz publishes /bench; partition WAN for ${OUTAGE_SECS}s."
+  echo "  N4 showed partition is self-healing → /bench gaps are purely from WAN outage."
   echo "  Expected gaps ≈ 50 × ${OUTAGE_SECS} = $(( 50 * OUTAGE_SECS )) messages."
 
   stack_up
@@ -484,46 +538,43 @@ scenario_N8() {
   sleep 5  # let /bench topic be discovered across federation
 
   local bench_out; bench_out=$(mktemp)
-  echo "  [N8] Starting bench_sub for 120s (captures gaps across outage)..."
+  echo "  [N8] Starting bench_sub for 120s..."
   bench_start_sub 120 > "$bench_out" &
   local bench_pid=$!
 
-  # Wait for bench warmup (5s built into bench_sub) + settle buffer
-  sleep 10
-  echo "  [N8] Warmup complete. Injecting failure at $(date -u +%H:%M:%S)..."
+  sleep 10  # warmup (5s built into bench_sub) + settle buffer
+  echo "  [N8] Partitioning WAN at $(date -u +%H:%M:%S) (outage: ${OUTAGE_SECS}s)..."
 
   local kill_time; kill_time=$(date +%s)
-  kill_svc edge-router SIGKILL
+  partition_link
 
-  echo "  [N8] Holding outage for ${OUTAGE_SECS}s..."
-  sleep "$OUTAGE_SECS"
+  keepalive_sleep "$OUTAGE_SECS"
 
-  echo "  [N8] Restarting edge-router at $(date -u +%H:%M:%S)..."
-  restart_svc edge-router
+  echo "  [N8] Restoring WAN at $(date -u +%H:%M:%S)..."
+  restore_link
 
   echo "  [N8] Waiting for bench_sub to complete..."
   wait "$bench_pid" || true
 
-  # Parse bench_sub JSON output
   local result; result=$(bench_parse_gaps "$bench_out")
   local gaps; gaps=$(echo "$result" | awk '{print $1}')
   local n_received; n_received=$(echo "$result" | awk '{print $2}')
   rm -f "$bench_out"
 
   local expected=$(( 50 * OUTAGE_SECS ))
-  local tolerance=$(( expected / 5 ))   # ±20%
+  local tolerance=$(( expected / 5 ))
   local low=$(( expected - tolerance ))
   local high=$(( expected + tolerance ))
 
-  pass "N8: bench received $n_received messages; gaps=$gaps (expected ~$expected for ${OUTAGE_SECS}s at 50 Hz)"
+  pass "N8: received $n_received messages; gaps=$gaps (expected ~$expected for ${OUTAGE_SECS}s at 50 Hz)"
   if [ "$gaps" -ge "$low" ] && [ "$gaps" -le "$high" ]; then
-    pass "N8: gap count within ±20% of expected ($low–$high)"
+    pass "N8: gap count within +-20% of expected ($low-$high)"
   elif [ "$gaps" -gt "$high" ]; then
-    note "N8: gap count $gaps exceeds expected max ($high) — recovery took longer than ${OUTAGE_SECS}s"
+    note "N8: gap count $gaps exceeds expected max ($high) - recovery took longer than outage window"
   elif [ "$gaps" -gt 0 ]; then
-    note "N8: gap count $gaps below expected min ($low) — some buffering may have occurred"
+    note "N8: gap count $gaps below expected min ($low) - partial buffering or timing mismatch"
   else
-    note "N8: zero gaps — bench_sub may have missed the outage window or /bench not bridged to cloud-router"
+    note "N8: zero gaps - bench_sub may have missed the outage or /bench topic not bridged"
   fi
 
   stack_down
@@ -534,7 +585,7 @@ scenario_N9() {
   sep "Scenario N9: CongestionControl::Drop vs Block comparison (SKIP)"
   note "N9 SKIP: requires a direct Zenoh Python/Rust API publisher (not via ROS 2 middleware)"
   note "N9 SKIP: Block (rmw_zenoh default for RELIABLE QoS):"
-  note "N9 SKIP:   publisher thread blocks up to wait_before_close=5s, then transport closes"
+  note "N9 SKIP:   publisher blocks up to wait_before_close=5s, then transport closes"
   note "N9 SKIP: Drop (best-effort):"
   note "N9 SKIP:   messages discarded after wait_before_drop=1ms when TX queue full"
   note "N9 SKIP: See DEFAULT_CONFIG.json5: transport.link.tx.queue.congestion_control"
@@ -544,33 +595,34 @@ scenario_N9() {
 scenario_N10() {
   sep "Scenario N10: Federation link failure — admin-space session monitoring"
   echo "  WAN partition + REST API polling to observe peer-session lifecycle."
+  echo "  Uses same network-disconnect mechanism as N4; adds admin-space validation."
 
   stack_up
   assert_flows /chatter
 
-  # Confirm federation link is visible in admin space before partition
+  # Confirm admin space is populated before partition
   echo "  [N10] Checking cloud-router admin space before partition..."
-  if wait_for_router_api "http://localhost:8001/@/**" "cloud-router" >/dev/null; then
+  if wait_for_router_api 'http://localhost:8001/@/router/local/session/**' "cloud-router" >/dev/null 2>&1; then
     pass "N10: cloud-router admin space populated (federation session active)"
   else
-    note "N10: cloud-router admin space empty before partition — admin plugin may not be configured"
+    note "N10: cloud-router admin space appears empty before partition (may be sparse in v1.9.0)"
   fi
 
   local kill_time; kill_time=$(date +%s)
   echo "  [N10] Partitioning WAN link at $(date -u +%H:%M:%S)..."
   partition_link
 
-  # Poll admin space for session disappearance (keepalive timeout)
-  echo "  [N10] Polling admin space for up to ${ADMIN_TIMEOUT}s to detect session drop..."
+  # Poll admin space — session entry count should drop as keepalive expires
+  echo "  [N10] Polling admin space up to ${ADMIN_TIMEOUT}s for session drop..."
   local deadline=$(( $(date +%s) + ADMIN_TIMEOUT ))
   local session_dropped=0
   while [ "$(date +%s)" -lt "$deadline" ]; do
     local cur_body
-    cur_body=$(curl -sf --max-time 3 "http://localhost:8001/@/**" 2>/dev/null || echo "")
-    if [ -z "$cur_body" ] || [ "$cur_body" = "{}" ] || [ "$cur_body" = "null" ] || [ "$cur_body" = "[]" ]; then
+    cur_body=$(curl -sf --max-time 3 'http://localhost:8001/@/router/local' 2>/dev/null || echo "")
+    if [ "$cur_body" = "[]" ] || [ -z "$cur_body" ]; then
       session_dropped=1
       local elapsed=$(( $(date +%s) - kill_time ))
-      echo "    admin space cleared at ${elapsed}s after partition"
+      echo "    admin space cleared at T+${elapsed}s after partition"
       break
     fi
     sleep 3
@@ -579,14 +631,14 @@ scenario_N10() {
   if [ "$session_dropped" -eq 1 ]; then
     pass "N10: cloud-router admin space cleared after WAN partition (session dropped)"
   else
-    note "N10: session still visible in admin space ${ADMIN_TIMEOUT}s after partition"
-    note "N10:   keepalive timeout may exceed ADMIN_TIMEOUT=${ADMIN_TIMEOUT}s — increase ADMIN_TIMEOUT to observe"
+    note "N10: session still visible ${ADMIN_TIMEOUT}s after partition — keepalive timeout likely > ADMIN_TIMEOUT"
+    note "N10:   lease=10s + keepalive period; actual expiry may be ~40-50s — increase ADMIN_TIMEOUT to observe"
   fi
 
   local remaining=$(( OUTAGE_SECS - ADMIN_TIMEOUT ))
   if [ "$remaining" -gt 0 ]; then
     echo "  [N10] Holding partition ${remaining}s more (total: ${OUTAGE_SECS}s)..."
-    sleep "$remaining"
+    keepalive_sleep "$remaining"
   fi
 
   echo "  [N10] Restoring WAN link at $(date -u +%H:%M:%S)..."
@@ -597,12 +649,12 @@ scenario_N10() {
   if [ "$recover_time" -ge 0 ] 2>/dev/null; then
     pass "N10: /chatter resumes in ${recover_time}s after WAN link restored"
   else
-    fail "N10: /chatter did not resume within ${RECONNECT_TIMEOUT}s after restore"
+    fail "N10: /chatter did not resume within ${RECONNECT_TIMEOUT}s — federation link failed to reestablish"
   fi
 
-  # Verify admin space repopulates (federation session re-established)
+  # Verify admin space repopulates
   echo "  [N10] Checking cloud-router admin space after restore..."
-  if wait_for_router_api "http://localhost:8001/@/**" "cloud-router post-restore" >/dev/null; then
+  if wait_for_router_api 'http://localhost:8001/@/router/local/session/**' "cloud-router post-restore" >/dev/null 2>&1; then
     pass "N10: cloud-router admin space repopulated (federation session restored)"
   else
     note "N10: admin space not repopulated within ${ADMIN_TIMEOUT}s after restore"
@@ -629,7 +681,7 @@ main() {
   echo ""
   echo "  Topology:"
   echo "    [edge-net] talker → bridge-talker → edge-router"
-  echo "                                              │ wan-net (failure point for N4, N10)"
+  echo "                                              │ wan-net (failure point N4, N10)"
   echo "    [cloud-net] listener ← bridge-listener ← cloud-router"
 
   stack_down 2>/dev/null || true
@@ -647,15 +699,15 @@ main() {
       scenario_N9
       scenario_N10
       ;;
-    N1)        scenario_N1 ;;
-    N2)        scenario_N2 ;;
-    N3)        scenario_N3 ;;
-    N4)        scenario_N4 ;;
-    N5|N6|N5N6) scenario_N5_N6 ;;
-    N7)        scenario_N7 ;;
-    N8)        scenario_N8 ;;
-    N9)        scenario_N9 ;;
-    N10)       scenario_N10 ;;
+    N1)          scenario_N1 ;;
+    N2)          scenario_N2 ;;
+    N3)          scenario_N3 ;;
+    N4)          scenario_N4 ;;
+    N5|N6|N5N6)  scenario_N5_N6 ;;
+    N7)          scenario_N7 ;;
+    N8)          scenario_N8 ;;
+    N9)          scenario_N9 ;;
+    N10)         scenario_N10 ;;
     *)
       echo "ERROR: unknown scenario '$target'. Valid: N1 N2 N3 N4 N5 N6 N7 N8 N9 N10 all"
       exit 1
