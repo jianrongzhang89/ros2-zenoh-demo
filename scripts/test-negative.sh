@@ -66,36 +66,11 @@ fail()  { printf "  ${RED}FAIL${RESET}  %s\n" "$*"; ((FAIL++)) || true; }
 note()  { printf "  ${YELLOW}NOTE${RESET}  %s\n" "$*"; NOTES+=("$*"); }
 sep()   { printf "\n── %s\n" "$*"; }
 
-# ── Prerequisite check ────────────────────────────────────────────────────────
-check_prereqs() {
-  local ok=1
-  command -v podman         &>/dev/null || { echo "ERROR: podman not found";         ok=0; }
-  command -v podman-compose &>/dev/null || { echo "ERROR: podman-compose not found"; ok=0; }
-  command -v curl           &>/dev/null || { echo "ERROR: curl not found";           ok=0; }
-  command -v python3        &>/dev/null || { echo "ERROR: python3 not found";        ok=0; }
-  [ "$ok" -eq 1 ] || { echo "Install missing tools and re-run."; exit 1; }
-  retag_images
-}
-
-# Tag versioned images as :latest so compose files work.
-# Tags survive machine stop/start, so this only matters on first use.
-retag_images() {
-  for img in quay.io/ecosystem-appeng/zenoh-router \
-             quay.io/ecosystem-appeng/zenoh-bridge-ros2dds; do
-    if podman image exists "${img}:latest" &>/dev/null 2>&1; then
-      continue
-    fi
-    local tagged
-    tagged=$(podman images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null \
-             | grep "^${img}:[0-9]" | head -1)
-    [ -n "$tagged" ] && podman tag "$tagged" "${img}:latest" &>/dev/null || true
-  done
-}
-
 # ── Podman machine health ─────────────────────────────────────────────────────
 # Check that the podman socket is answering; restart the machine if not.
 # This handles the libkrun socket-forwarding drops that occur on macOS after
-# several minutes of container workload.
+# several minutes of container workload.  Called at the top of main() so it
+# runs before check_prereqs (which would fail with set -e if the socket is down).
 ensure_podman() {
   podman ps &>/dev/null 2>&1 && return 0
   echo "  [machine] podman socket lost — restarting machine..."
@@ -105,6 +80,33 @@ ensure_podman() {
   sleep 3
   retag_images
   echo "  [machine] machine restarted"
+}
+
+# Tag versioned images as :latest so compose files work.
+# The pipeline uses || true so set -euo pipefail cannot exit the script if
+# the image listing returns non-zero (e.g. immediately after a machine restart).
+retag_images() {
+  for img in quay.io/ecosystem-appeng/zenoh-router \
+             quay.io/ecosystem-appeng/zenoh-bridge-ros2dds; do
+    if podman image exists "${img}:latest" &>/dev/null 2>&1; then
+      continue
+    fi
+    local tagged
+    tagged=$(podman images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null \
+             | grep "^${img}:[0-9]" | head -1 || true)
+    [ -n "$tagged" ] && podman tag "$tagged" "${img}:latest" &>/dev/null || true
+  done
+}
+
+# ── Prerequisite check ────────────────────────────────────────────────────────
+check_prereqs() {
+  local ok=1
+  command -v podman         &>/dev/null || { echo "ERROR: podman not found";         ok=0; }
+  command -v podman-compose &>/dev/null || { echo "ERROR: podman-compose not found"; ok=0; }
+  command -v curl           &>/dev/null || { echo "ERROR: curl not found";           ok=0; }
+  command -v python3        &>/dev/null || { echo "ERROR: python3 not found";        ok=0; }
+  [ "$ok" -eq 1 ] || { echo "Install missing tools and re-run."; exit 1; }
+  retag_images
 }
 
 # ── Container lookup ──────────────────────────────────────────────────────────
@@ -703,6 +705,7 @@ scenario_N10() {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
+  ensure_podman
   check_prereqs
 
   echo ""
