@@ -74,6 +74,37 @@ check_prereqs() {
   command -v curl           &>/dev/null || { echo "ERROR: curl not found";           ok=0; }
   command -v python3        &>/dev/null || { echo "ERROR: python3 not found";        ok=0; }
   [ "$ok" -eq 1 ] || { echo "Install missing tools and re-run."; exit 1; }
+  retag_images
+}
+
+# Tag versioned images as :latest so compose files work.
+# Tags survive machine stop/start, so this only matters on first use.
+retag_images() {
+  for img in quay.io/ecosystem-appeng/zenoh-router \
+             quay.io/ecosystem-appeng/zenoh-bridge-ros2dds; do
+    if podman image exists "${img}:latest" &>/dev/null 2>&1; then
+      continue
+    fi
+    local tagged
+    tagged=$(podman images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null \
+             | grep "^${img}:[0-9]" | head -1)
+    [ -n "$tagged" ] && podman tag "$tagged" "${img}:latest" &>/dev/null || true
+  done
+}
+
+# ── Podman machine health ─────────────────────────────────────────────────────
+# Check that the podman socket is answering; restart the machine if not.
+# This handles the libkrun socket-forwarding drops that occur on macOS after
+# several minutes of container workload.
+ensure_podman() {
+  podman ps &>/dev/null 2>&1 && return 0
+  echo "  [machine] podman socket lost — restarting machine..."
+  podman machine stop 2>/dev/null || true
+  sleep 3
+  podman machine start 2>/dev/null || true
+  sleep 3
+  retag_images
+  echo "  [machine] machine restarted"
 }
 
 # ── Container lookup ──────────────────────────────────────────────────────────
@@ -82,20 +113,21 @@ check_prereqs() {
 #   old: neg-test_edge-router_1
 ctr() {
   local service="$1"
-  podman ps -a --format "{{.Names}}" \
+  podman ps -a --format "{{.Names}}" 2>/dev/null \
     | grep -E "^${PROJECT}[-_]${service}[-_][0-9]+$" \
     | head -1
 }
 
 # ── WAN network name ──────────────────────────────────────────────────────────
 wan_network() {
-  podman network ls --format "{{.Name}}" \
+  podman network ls --format "{{.Name}}" 2>/dev/null \
     | grep -E "^${PROJECT}[-_]wan-net$" \
     | head -1
 }
 
 # ── Stack lifecycle ───────────────────────────────────────────────────────────
 stack_up() {
+  ensure_podman
   echo "  [stack] Starting with edge=$(basename "$EDGE_CFG") cloud=$(basename "$CLOUD_CFG")"
   EDGE_ROUTER_CONFIG="$EDGE_CFG" CLOUD_ROUTER_CONFIG="$CLOUD_CFG" \
     podman-compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d &>/dev/null || true
@@ -109,20 +141,26 @@ stack_up() {
   warm_dds
 }
 
-# Sleep in 5-second chunks, pinging the podman socket to prevent idle disconnect.
+# Sleep in 5-second chunks.  After each chunk, check the podman socket and
+# restart the machine if it has gone away — the libkrun backend on macOS can
+# drop the socket forwarding under sustained container load.
 keepalive_sleep() {
   local remaining="$1"
   while [ "$remaining" -gt 0 ]; do
     local chunk=$(( remaining < 5 ? remaining : 5 ))
     sleep "$chunk"
     remaining=$(( remaining - chunk ))
-    podman ps --format "{{.Names}}" &>/dev/null || true
+    ensure_podman
   done
 }
 
 stack_down() {
   echo "  [stack] Tearing down..."
-  podman-compose -p "$PROJECT" -f "$COMPOSE_FILE" down --timeout 10 &>/dev/null || true
+  podman-compose -p "$PROJECT" -f "$COMPOSE_FILE" down --timeout 15 &>/dev/null || true
+  # Prune stopped containers and unused networks to prevent state accumulation
+  # across successive scenarios (libkrun VM leaks resources without this).
+  podman container prune --force &>/dev/null || true
+  podman network prune --force   &>/dev/null || true
 }
 
 warm_dds() {
