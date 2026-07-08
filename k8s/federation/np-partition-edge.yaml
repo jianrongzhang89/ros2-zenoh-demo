@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: partition-edge-to-cloud
+  namespace: ros2-zenoh-federation
+spec:
+  podSelector:
+    matchLabels:
+      app: edge-router
+  policyTypes:
+    - Egress
+  egress:
+    # Allow bridge sidecar connections from edge-talker pods on port 7448
+    - to:
+        - podSelector:
+            matchLabels:
+              app: edge-talker
+      ports:
+        - port: 7448
+          protocol: TCP
+    # Allow DNS resolution so the router can still look up service names
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # No rule for cloud-router port 7447 — egress to cloud is blocked
+    # Delete this NetworkPolicy to restore the federation link
