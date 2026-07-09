@@ -51,9 +51,12 @@ class BenchSubscriber(Node):
         except (ValueError, AttributeError):
             return
 
-        # Track sequence gaps regardless of warmup (so gap count is accurate)
+        # Track sequence gaps regardless of warmup (so gap count is accurate).
+        # Skip out-of-order / duplicate arrivals to avoid false gap inflation.
+        if self._last_seq >= 0 and seq <= self._last_seq:
+            return
         if self._last_seq >= 0 and seq != self._last_seq + 1:
-            self._gaps += max(0, seq - self._last_seq - 1)
+            self._gaps += seq - self._last_seq - 1  # guaranteed positive
         self._last_seq = seq
 
         if now_mono < self._warmup_end:

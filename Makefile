@@ -18,6 +18,8 @@ AUTHFILE       ?= $(HOME)/.config/containers/auth.json
         test-filtering test-filtering-scenario \
         test-federation test-federation-scenario \
         deploy-federation undeploy-federation test-federation-ocp test-federation-ocp-scenario \
+        test-negative test-negative-scenario \
+        test-negative-ocp test-negative-ocp-scenario \
         help
 
 all: build push deploy test
@@ -127,6 +129,22 @@ test-federation-ocp:
 ## Run a single OCP federation scenario: make test-federation-ocp-scenario N=F1  (N=F1|F2|F3)
 test-federation-ocp-scenario:
 	NAMESPACE=$(FEDERATION_NS) SCENARIO=$(N) bash scripts/test-federation-ocp.sh
+
+## Run all negative/disruption test scenarios locally (requires: podman machine running)
+test-negative:
+	bash scripts/test-negative.sh
+
+## Run a single negative scenario: make test-negative-scenario N=N3  (N=N1..N10)
+test-negative-scenario:
+	SCENARIO=$(N) bash scripts/test-negative.sh
+
+## Run all negative/disruption scenarios on the OCP cluster (requires: kubectl configured, make deploy-federation)
+test-negative-ocp:
+	NAMESPACE=$(FEDERATION_NS) bash scripts/test-negative-ocp.sh
+
+## Run one OCP negative scenario: make test-negative-ocp-scenario N=N3  (N=N1..N10)
+test-negative-ocp-scenario:
+	NAMESPACE=$(FEDERATION_NS) SCENARIO=$(N) bash scripts/test-negative-ocp.sh
 
 ## Build UBI-based zenoh router image (multi-stage: binary extracted from eclipse/zenoh)
 build-router:
